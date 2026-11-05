@@ -333,6 +333,21 @@ impl AltScreen {
         )
     }
 
+    /// Alt-screen text with secrets that Warp already obfuscated left obfuscated.
+    pub fn output_to_string_obfuscated(&self) -> String {
+        self.grid_handler.bounds_to_string(
+            Point::new(0, 0),
+            Point::new(
+                self.grid_handler.total_rows().saturating_sub(1),
+                self.grid_handler.columns().saturating_sub(1),
+            ),
+            false, /* include_esc_sequences */
+            RespectObfuscatedSecrets::Yes,
+            false, /* force_obfuscated_secrets */
+            RespectDisplayedOutput::No,
+        )
+    }
+
     pub fn needs_bracketed_paste(&self) -> bool {
         self.grid_handler.needs_bracketed_paste()
     }

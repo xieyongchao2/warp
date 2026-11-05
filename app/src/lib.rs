@@ -59,6 +59,8 @@ mod prefix;
 mod preview_config_migration;
 mod pricing;
 mod profiling;
+#[cfg(not(target_family = "wasm"))]
+mod remote_session_bridge;
 mod projects;
 mod prompt;
 mod quit_warning;
@@ -2677,6 +2679,7 @@ pub(crate) fn initialize_app(
             ];
             http_server::HttpServer::new(routers, ctx)
         });
+        ctx.add_singleton_model(remote_session_bridge::RemoteSessionBridge::new);
     }
     #[cfg(feature = "local_fs")]
     if matches!(
