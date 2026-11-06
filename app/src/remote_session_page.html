@@ -9,128 +9,119 @@
     :root {
       color-scheme: dark;
       --bg: #101114;
-      --surface: rgba(29, 32, 39, .82);
-      --surface-strong: #20242c;
+      --surface: #1a1d24;
+      --surface-2: #20242c;
       --line: rgba(255, 255, 255, .09);
-      --text: #f5f3ed;
-      --muted: #9299a8;
+      --text: #f2f0ea;
+      --muted: #98a0af;
       --subtle: #626a79;
       --accent: #dfff4f;
       --accent-soft: rgba(223, 255, 79, .12);
-      --shadow: 0 18px 50px rgba(0, 0, 0, .22);
       font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
-      margin: 0;
-      min-height: 100vh;
-      min-height: 100svh;
-      color: var(--text);
+      margin: 0; overflow: hidden; color: var(--text);
       background:
-        radial-gradient(ellipse 70% 34% at 100% 0%, rgba(111, 133, 53, .16), transparent 72%),
-        radial-gradient(ellipse 65% 30% at 0% 42%, rgba(63, 76, 113, .12), transparent 75%),
+        radial-gradient(ellipse 70% 26% at 100% 0%, rgba(111, 133, 53, .13), transparent 70%),
         var(--bg);
     }
-    button { font: inherit; cursor: pointer; }
-    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-    .app { width: min(100%, 760px); margin: 0 auto; padding: 24px 20px 40px; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-    .brand { display: flex; align-items: center; gap: 11px; }
+    .app {
+      display: flex; flex-direction: column; gap: 8px;
+      width: min(100%, 760px); height: 100svh; margin: 0 auto;
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; }
+    .brand { display: flex; align-items: center; gap: 8px; }
     .brand-mark {
-      display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px;
-      color: #171b0b; background: var(--accent); font-size: 20px; font-weight: 800;
-      box-shadow: 0 5px 22px rgba(223, 255, 79, .16);
+      display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px;
+      color: #171b0b; background: var(--accent); font-size: 16px; font-weight: 800;
     }
-    .brand-name { font-size: 17px; font-weight: 700; letter-spacing: -.02em; }
-    .brand-caption { margin-top: 2px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .brand-name { font-size: 14px; font-weight: 700; letter-spacing: -.01em; line-height: 1.1; }
+    .brand-caption { margin-top: 1px; color: var(--subtle); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
     .icon-button {
-      display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid var(--line);
-      border-radius: 13px; color: var(--muted); background: rgba(255, 255, 255, .035);
-      transition: color .18s, background .18s, border-color .18s, transform .18s;
+      display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line);
+      border-radius: 10px; color: var(--muted); background: rgba(255, 255, 255, .035);
     }
-    .icon-button:hover { color: var(--text); background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .18); }
-    .icon-button:active { transform: scale(.95); }
     .icon-button:disabled { cursor: wait; opacity: .6; }
-    .icon-button svg { width: 18px; height: 18px; }
-    .icon-button.loading svg { animation: spin .8s linear infinite; }
+    .icon-button svg { width: 15px; height: 15px; }
+    .icon-button.loading svg, .viewer-refresh.loading svg { animation: spin .8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .hero { margin: 40px 0 25px; }
-    .eyebrow { display: flex; align-items: center; gap: 7px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-    .eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
-    h1 { margin: 12px 0 8px; font-size: clamp(29px, 7vw, 38px); line-height: 1.12; letter-spacing: -.055em; }
-    .hero-copy { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
+    .list-head { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; padding: 2px 2px 0; }
+    .list-title { color: #cfd5df; font-size: 11px; font-weight: 650; letter-spacing: .02em; }
+    .count { color: var(--subtle); font-size: 10px; }
 
-    .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .section-title { color: #d8dce4; font-size: 13px; font-weight: 650; }
-    .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-
-    .sessions { display: grid; gap: 10px; }
+    .sessions { display: grid; gap: 6px; flex: 0 0 auto; max-height: 26vh; overflow-y: auto; overscroll-behavior: contain; }
     .session {
-      position: relative; display: flex; align-items: center; gap: 13px; width: 100%; min-height: 78px;
-      padding: 15px; text-align: left; color: var(--text); background: var(--surface);
-      border: 1px solid var(--line); border-radius: 17px; box-shadow: 0 5px 20px rgba(0, 0, 0, .08);
-      transition: border-color .18s, background .18s, transform .18s, box-shadow .18s;
+      display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px;
+      padding: 9px 11px; text-align: left; color: var(--text);
+      background: var(--surface); border: 1px solid var(--line); border-radius: 13px;
+      transition: border-color .16s, background .16s;
     }
-    .session:hover { background: var(--surface-strong); border-color: rgba(255, 255, 255, .17); transform: translateY(-1px); }
-    .session.active { background: linear-gradient(115deg, rgba(223, 255, 79, .13), rgba(29, 32, 39, .9) 65%); border-color: rgba(223, 255, 79, .65); box-shadow: 0 8px 30px rgba(0, 0, 0, .16), 0 0 0 1px rgba(223, 255, 79, .06); }
-    .session-icon { display: grid; place-items: center; flex: 0 0 39px; width: 39px; height: 39px; border-radius: 12px; color: #c5cbd6; background: rgba(255, 255, 255, .065); }
+    .session:hover { background: var(--surface-2); border-color: rgba(255,255,255,.16); }
+    .session.active { background: linear-gradient(115deg, rgba(223,255,79,.11), var(--surface) 70%); border-color: rgba(223,255,79,.6); }
+    .session-icon { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 9px; color: #c5cbd6; background: rgba(255,255,255,.06); }
     .session.active .session-icon { color: var(--accent); background: var(--accent-soft); }
-    .session-icon svg { width: 19px; height: 19px; }
+    .session-icon svg { width: 15px; height: 15px; }
     .session-info { min-width: 0; flex: 1; }
-    .session-title { overflow: hidden; color: #e9ebef; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-    .session-meta { display: flex; align-items: center; gap: 7px; margin-top: 6px; color: var(--muted); font-size: 11px; }
-    .status-dot { width: 5px; height: 5px; border-radius: 50%; background: #86d99b; }
-    .session-chevron { flex: 0 0 auto; color: var(--subtle); }
-    .session.active .session-chevron { color: var(--accent); }
-    .session-chevron svg { width: 16px; height: 16px; }
+    .session-title { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .session-meta { margin-top: 3px; color: var(--subtle); font-size: 10px; }
+    .chevron { flex: 0 0 auto; color: var(--subtle); transition: transform .18s; }
+    .session.active .chevron { transform: rotate(90deg); color: var(--accent); }
+    .chevron svg { width: 14px; height: 14px; display: block; }
 
-    .empty { padding: 42px 24px; text-align: center; background: rgba(255, 255, 255, .025); border: 1px dashed rgba(255, 255, 255, .13); border-radius: 20px; }
-    .empty-icon { display: grid; place-items: center; width: 52px; height: 52px; margin: 0 auto 17px; color: var(--muted); background: rgba(255, 255, 255, .05); border: 1px solid var(--line); border-radius: 16px; }
-    .empty-icon svg { width: 24px; height: 24px; }
-    .empty-title { margin: 0; font-size: 15px; font-weight: 600; }
-    .empty-copy { max-width: 280px; margin: 9px auto 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
-    .secondary-button { display: inline-flex; align-items: center; gap: 7px; padding: 9px 14px; color: #dce1e9; background: rgba(255, 255, 255, .07); border: 1px solid var(--line); border-radius: 10px; font-size: 12px; }
-    .secondary-button:hover { background: rgba(255, 255, 255, .12); }
-    .secondary-button svg { width: 14px; height: 14px; }
+    .empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12px; background: rgba(255,255,255,.025); border: 1px dashed var(--line); border-radius: 13px; }
 
-    .viewer { margin-top: 22px; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; background: rgba(17, 19, 24, .88); box-shadow: var(--shadow); }
-    .viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, .025); }
-    .viewer-name { display: flex; align-items: center; gap: 8px; min-width: 0; color: #e9ebef; font-size: 13px; font-weight: 600; }
-    .viewer-name > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .live-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-    .readonly-badge { flex: 0 0 auto; padding: 3px 7px; color: var(--muted); background: rgba(255, 255, 255, .06); border: 1px solid var(--line); border-radius: 6px; font-size: 10px; font-weight: 650; letter-spacing: .04em; }
-    .viewer-actions { display: flex; align-items: center; gap: 8px; }
-    .viewer-refresh { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: transparent; }
-    .viewer-refresh:hover { color: var(--text); background: rgba(255, 255, 255, .07); }
-    .viewer-refresh svg { width: 15px; height: 15px; }
-    .viewer-refresh.loading svg { animation: spin .8s linear infinite; }
+    .viewer {
+      display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+      border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #0d0f13;
+    }
+    .viewer[hidden] { display: none; }
+    .viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; padding: 8px 11px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.025); }
+    .viewer-name { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; font-weight: 600; }
+    .viewer-name > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .live-dot { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .badge { flex: 0 0 auto; padding: 2px 6px; color: var(--subtle); background: rgba(255,255,255,.06); border-radius: 5px; font-size: 9px; }
+    .viewer-refresh { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: transparent; }
+    .viewer-refresh svg { width: 13px; height: 13px; }
     .content {
-      margin: 0; padding: 16px; min-height: 220px; max-height: 52vh; overflow: auto;
+      flex: 1 1 auto; min-height: 0; margin: 0; padding: 11px 12px; overflow: auto;
       color: #c7ceda; background: #0d0f13; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-      font-size: 12px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
-      tab-size: 4; overscroll-behavior: contain;
+      font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; tab-size: 4;
     }
     .content.placeholder { color: var(--subtle); }
-    .viewer-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; color: var(--subtle); font-size: 11px; border-top: 1px solid var(--line); }
-    .viewer-foot .live { color: #8a9bb0; }
+    .viewer-foot { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; padding: 6px 11px; color: var(--subtle); font-size: 10px; border-top: 1px solid var(--line); }
 
-    .hint { display: flex; align-items: flex-start; gap: 8px; margin: 18px 2px 0; color: var(--subtle); font-size: 11px; line-height: 1.6; }
-    .hint svg { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 2px; }
-    .log { min-height: 17px; margin: 10px 2px 0; color: var(--muted); font-size: 11px; }
+    .composer { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+    #text {
+      min-width: 0; flex: 1; height: 40px; padding: 0 11px; color: var(--text);
+      background: var(--surface); border: 1px solid var(--line); border-radius: 11px; font-size: 12.5px;
+    }
+    #text::placeholder { color: var(--subtle); }
+    #text:disabled { opacity: .5; }
+    .send {
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 40px; padding: 0 14px;
+      color: #171b0b; background: var(--accent); border: 0; border-radius: 11px; font-size: 12.5px; font-weight: 700;
+    }
+    .send:disabled { cursor: not-allowed; opacity: .35; }
+    .send svg { width: 14px; height: 14px; }
+    .log { min-height: 14px; flex: 0 0 auto; margin: 0 2px; color: var(--muted); font-size: 10px; }
     .log.error { color: #f29b9b; }
+    .log.success { color: #b9df89; }
 
     @media (min-width: 600px) {
-      .app { padding-top: 34px; }
-      .hero { margin-top: 54px; }
-      .session { min-height: 86px; padding: 18px; }
-      .content { max-height: 58vh; font-size: 13px; }
+      .app { padding-top: 14px; }
+      .sessions { max-height: 30vh; }
+      .content { font-size: 12.5px; }
     }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
-    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
   </style>
 </head>
 <body>
@@ -144,60 +135,43 @@
         </div>
       </div>
       <button id="refresh" class="icon-button" type="button" aria-label="刷新会话" title="刷新会话">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
       </button>
     </header>
 
-    <section class="hero" aria-labelledby="page-title">
-      <div class="eyebrow">Your workspace</div>
-      <h1 id="page-title">你的会话</h1>
-      <p class="hero-copy">只读查看终端输出。<br>不会向 Warp 会话发送任何内容。</p>
-    </section>
+    <div class="list-head">
+      <span class="list-title">已打开的会话</span>
+      <span id="count" class="count">加载中…</span>
+    </div>
+    <div id="sessions" class="sessions" aria-live="polite"></div>
+    <div id="empty" class="empty" hidden>还没有打开的会话，在 Warp 中打开终端后点右上角刷新。</div>
 
-    <main>
-      <div class="section-heading">
-        <span class="section-title">已打开的会话</span>
-        <span id="count" class="count">加载中…</span>
-      </div>
-      <div id="sessions" class="sessions" aria-live="polite"></div>
-      <div id="empty" class="empty" hidden>
-        <div class="empty-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>
+    <section id="viewer" class="viewer" hidden aria-label="会话内容">
+      <div class="viewer-head">
+        <div class="viewer-name">
+          <span class="live-dot"></span>
+          <span id="viewer-title">会话内容</span>
+          <span class="badge">输出</span>
         </div>
-        <h2 class="empty-title">还没有打开的会话</h2>
-        <p class="empty-copy">在 Warp 中打开一个终端会话后，<br>点击刷新就能在这里看到内容。</p>
-        <button id="empty-refresh" class="secondary-button" type="button">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
-          刷新会话
+        <button id="content-refresh" class="viewer-refresh" type="button" aria-label="刷新内容" title="刷新内容">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
         </button>
       </div>
+      <pre id="content" class="content placeholder">暂无可见输出</pre>
+      <div class="viewer-foot">
+        <span id="content-status">等待选择会话</span>
+        <span>自动刷新</span>
+      </div>
+    </section>
 
-      <section id="viewer" class="viewer" hidden aria-label="会话内容">
-        <div class="viewer-head">
-          <div class="viewer-name">
-            <span class="live-dot"></span>
-            <span id="viewer-title">会话内容</span>
-            <span class="readonly-badge">只读</span>
-          </div>
-          <div class="viewer-actions">
-            <button id="content-refresh" class="viewer-refresh" type="button" aria-label="刷新内容" title="刷新内容">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
-            </button>
-          </div>
-        </div>
-        <pre id="content" class="content placeholder">选择会话后显示内容</pre>
-        <div class="viewer-foot">
-          <span id="content-status">等待选择会话</span>
-          <span class="live">自动刷新</span>
-        </div>
-      </section>
-
-      <p class="hint">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
-        页面只读取最近的终端输出，不会发送键盘输入或命令。
-      </p>
-      <p id="log" class="log" role="status" aria-live="polite"></p>
-    </main>
+    <form id="composer" class="composer">
+      <input id="text" placeholder="选择会话后可发送指令" autocomplete="off" enterkeyhint="send" disabled>
+      <button id="send" class="send" type="submit" disabled>
+        <span>发送</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6-7-1Z"/><path d="m12 13 7-8"/></svg>
+      </button>
+    </form>
+    <p id="log" class="log" role="status" aria-live="polite"></p>
   </div>
 
   <script>
@@ -211,13 +185,15 @@
     const viewerTitle = document.querySelector("#viewer-title");
     const contentEl = document.querySelector("#content");
     const contentStatus = document.querySelector("#content-status");
+    const textInput = document.querySelector("#text");
+    const sendButton = document.querySelector("#send");
     const logEl = document.querySelector("#log");
     let selected = null;
     let sessions = [];
     let contentLoading = false;
 
     const terminalIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>';
-    const chevronIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
+    const chevronIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
 
     function log(message, kind = "") {
       logEl.textContent = message;
@@ -230,7 +206,7 @@
 
     function renderSessions() {
       sessionsEl.replaceChildren();
-      countEl.textContent = `${sessions.length} 个会话`;
+      countEl.textContent = `${sessions.length} 个`;
       emptyEl.hidden = sessions.length !== 0;
       if (selected && !sessions.some((item) => item.id === selected)) selected = null;
       for (const session of sessions) {
@@ -238,37 +214,43 @@
         button.type = "button";
         button.className = `session${session.id === selected ? " active" : ""}`;
         button.dataset.id = session.id;
-        button.setAttribute("aria-pressed", String(session.id === selected));
-        button.innerHTML = `<span class="session-icon">${terminalIcon}</span><span class="session-info"><span class="session-title"></span><span class="session-meta"><span class="status-dot"></span><span>终端会话 · 标签 ${session.tab}</span></span></span><span class="session-chevron">${chevronIcon}</span>`;
+        button.setAttribute("aria-expanded", String(session.id === selected));
+        button.innerHTML = `<span class="session-icon">${terminalIcon}</span><span class="session-info"><span class="session-title"></span><span class="session-meta">标签 ${session.tab}${session.readOnly ? " · 只读" : ""}</span></span><span class="chevron">${chevronIcon}</span>`;
         button.querySelector(".session-title").textContent = session.title || `标签 ${session.tab}`;
-        button.addEventListener("click", () => selectSession(session.id));
+        button.addEventListener("click", () => toggleSession(session.id));
         sessionsEl.appendChild(button);
       }
-      if (!selected && sessions.length) selectSession(sessions[0].id, false);
       updateViewer();
     }
 
     function updateViewer() {
       const session = selectedSession();
+      viewerEl.hidden = !session;
       if (!session) {
-        viewerEl.hidden = true;
         contentStatus.textContent = "等待选择会话";
+        textInput.disabled = true;
+        sendButton.disabled = true;
+        textInput.placeholder = "选择会话后可发送指令";
         return;
       }
-      viewerEl.hidden = false;
       viewerTitle.textContent = session.title || `标签 ${session.tab}`;
+      const enabled = !session.readOnly;
+      textInput.disabled = !enabled;
+      sendButton.disabled = !enabled;
+      textInput.placeholder = enabled ? "输入指令，回车发送" : "该会话为只读";
+      if (enabled) textInput.focus();
     }
 
-    function selectSession(id, load = true) {
-      selected = id;
-      for (const card of sessionsEl.querySelectorAll(".session")) {
-        const active = card.dataset.id === id;
-        card.classList.toggle("active", active);
-        card.setAttribute("aria-pressed", String(active));
+    function toggleSession(id) {
+      if (selected === id) {
+        selected = null;
+        renderSessions();
+        log("");
+        return;
       }
-      updateViewer();
-      log("");
-      if (load) loadContent();
+      selected = id;
+      renderSessions();
+      loadContent();
     }
 
     async function loadContent() {
@@ -279,9 +261,7 @@
       contentRefreshButton.disabled = true;
       const nearBottom = contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight < 48;
       try {
-        const response = await fetch(`/api/content?id=${encodeURIComponent(session.id)}`, {
-          headers: { "x-warp-token": token },
-        });
+        const response = await fetch(`/api/content?id=${encodeURIComponent(session.id)}`, { headers: { "x-warp-token": token } });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "读取会话内容失败");
         const text = (body.content && body.content.text) || "";
@@ -289,7 +269,6 @@
         contentEl.textContent = text || "暂无可见输出";
         if (nearBottom) contentEl.scrollTop = contentEl.scrollHeight;
         contentStatus.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-        log("");
       } catch (error) {
         contentStatus.textContent = "更新失败";
         log(error.message || "读取会话内容失败", "error");
@@ -323,8 +302,33 @@
     }
 
     refreshButton.addEventListener("click", loadSessions);
-    document.querySelector("#empty-refresh").addEventListener("click", loadSessions);
     contentRefreshButton.addEventListener("click", loadContent);
+    document.querySelector("#composer").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const session = selectedSession();
+      if (!session || sendButton.disabled) return;
+      const text = textInput.value;
+      if (!text.trim()) {
+        textInput.focus();
+        return;
+      }
+      sendButton.disabled = true;
+      try {
+        const response = await fetch("/api/input", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-warp-token": token },
+          body: JSON.stringify({ id: session.id, text, enter: true }),
+        });
+        if (!response.ok) throw new Error("发送失败，请确认会话仍然打开");
+        textInput.value = "";
+        log("指令已发送", "success");
+        setTimeout(loadContent, 600);
+      } catch (error) {
+        log(error.message || "发送失败", "error");
+      } finally {
+        sendButton.disabled = false;
+      }
+    });
     setInterval(() => {
       if (selected && !document.hidden) loadContent();
     }, 2500);
