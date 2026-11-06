@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#101114">
   <title>Warp 会话</title>
   <style>
@@ -33,7 +33,7 @@
 
     .app {
       display: flex; flex-direction: column; gap: 8px;
-      width: min(100%, 760px); height: 100svh; margin: 0 auto;
+      width: min(100%, 760px); height: var(--vvh, 100svh); margin: 0 auto;
       padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
     }
 
@@ -104,6 +104,9 @@
       min-width: 0; flex: 1; height: 40px; padding: 0 11px; color: var(--text);
       background: var(--surface); border: 1px solid var(--line); border-radius: 11px; font-size: 12.5px;
     }
+    /* iOS Safari auto-zooms any focused input below 16px, which collapses the
+       visualViewport the layout depends on. */
+    @media (pointer: coarse) { #text { font-size: 16px; } }
     #text::placeholder { color: var(--subtle); }
     #text:disabled { opacity: .5; }
     .send {
@@ -191,6 +194,8 @@
     let selected = null;
     let sessions = [];
     let contentLoading = false;
+    let sending = false;
+    const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
     const terminalIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>';
     const chevronIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
@@ -235,10 +240,13 @@
       }
       viewerTitle.textContent = session.title || `标签 ${session.tab}`;
       const enabled = !session.readOnly;
-      textInput.disabled = !enabled;
-      sendButton.disabled = !enabled;
-      textInput.placeholder = enabled ? "输入指令，回车发送" : "该会话为只读";
-      if (enabled) textInput.focus();
+      textInput.disabled = !enabled || sending;
+      sendButton.disabled = !enabled || sending;
+      textInput.placeholder = enabled ? "点此输入指令" : "该会话为只读";
+      // On touch devices focusing pops the on-screen keyboard and squeezes
+      // the output; on desktop there is no keyboard, so keep typing friction
+      // at zero.
+      if (enabled && finePointer && !sending) textInput.focus();
     }
 
     function toggleSession(id) {
@@ -250,6 +258,7 @@
       }
       selected = id;
       renderSessions();
+      if (!finePointer) textInput.blur();
       loadContent();
     }
 
@@ -303,15 +312,39 @@
 
     refreshButton.addEventListener("click", loadSessions);
     contentRefreshButton.addEventListener("click", loadContent);
+
+    // Track the real on-screen viewport so the composer sits right above the
+    // keyboard and the output area shrinks smoothly instead of being pushed
+    // off screen.
+    if (window.visualViewport) {
+      const viewport = window.visualViewport;
+      const syncViewport = () => {
+        // During pinch-zoom the height is already divided by the scale
+        // factor; shrinking the app there would fight the user's zoom.
+        if (viewport.scale !== 1) return;
+        // Measure against the pre-shrink geometry, then swap the height, so
+        // "was at bottom" survives the keyboard opening.
+        const nearBottom = contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight < 48;
+        document.documentElement.style.setProperty("--vvh", `${viewport.height}px`);
+        if (nearBottom) contentEl.scrollTop = contentEl.scrollHeight;
+      };
+      viewport.addEventListener("resize", syncViewport);
+      syncViewport();
+    }
+    // Tapping the output dismisses the keyboard so reading gets the full
+    // screen back.
+    contentEl.addEventListener("click", () => {
+      if (document.activeElement === textInput) textInput.blur();
+    });
     document.querySelector("#composer").addEventListener("submit", async (event) => {
       event.preventDefault();
       const session = selectedSession();
-      if (!session || sendButton.disabled) return;
+      if (!session || sending) return;
       const text = textInput.value;
-      if (!text.trim()) {
-        textInput.focus();
-        return;
-      }
+      if (!text.trim()) return;
+      // Hold the lock through the request: renderSessions may run while the
+      // POST is in flight and would otherwise re-enable the button.
+      sending = true;
       sendButton.disabled = true;
       try {
         const response = await fetch("/api/input", {
@@ -326,7 +359,8 @@
       } catch (error) {
         log(error.message || "发送失败", "error");
       } finally {
-        sendButton.disabled = false;
+        sending = false;
+        updateViewer();
       }
     });
     setInterval(() => {

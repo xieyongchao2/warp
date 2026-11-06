@@ -3,6 +3,7 @@
 //! The page binds to loopback only. Keystrokes go through `TerminalView::write_to_pty`,
 //! which is the same path the UI uses, so this bridge never locks `TerminalModel`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
@@ -12,10 +13,14 @@ use axum::response::Html;
 use axum::routing::get;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use warpui::{Entity, ModelContext, ModelSpawner, SingletonEntity};
+use tokio::sync::mpsc::UnboundedSender;
+use warpui::{Entity, EntityId, ModelContext, ModelSpawner, SingletonEntity};
 
+use crate::terminal::cli_agent_sessions::{CLIAgentSessionsModel, CLIAgentSessionsModelEvent};
 use crate::terminal::view::TerminalView;
 use crate::workspace::Workspace;
+
+mod wechat;
 
 const PAGE: &str = include_str!("remote_session_page.html");
 const MAX_CONTENT_CHARS: usize = 24_000;
@@ -26,7 +31,13 @@ struct BridgeState {
     token: Arc<str>,
 }
 
-pub struct RemoteSessionBridge;
+pub struct RemoteSessionBridge {
+    /// Present only when the WeChat channel is enabled; agent status changes are
+    /// queued here and delivered by the channel's own long-poll task.
+    notifier: Option<UnboundedSender<String>>,
+    /// Last pushed status tag per terminal, so a repeated status does not re-notify.
+    last_pushed: HashMap<EntityId, &'static str>,
+}
 
 impl Entity for RemoteSessionBridge {
     type Event = ();
@@ -46,17 +57,99 @@ impl RemoteSessionBridge {
         };
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
-            .enable_io()
+            .enable_all()
             .build();
         match runtime {
             Ok(runtime) => {
-                runtime.spawn(serve(state));
+                runtime.spawn(serve(state.clone()));
+                let notifier = wechat::enabled().then(|| {
+                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                    runtime.spawn(wechat::run(state.spawner.clone(), rx));
+                    tx
+                });
+                if notifier.is_some() {
+                    let sessions = CLIAgentSessionsModel::handle(ctx);
+                    ctx.subscribe_to_model(&sessions, |bridge, _, event, ctx| {
+                        bridge.on_cli_agent_event(event, ctx);
+                    });
+                }
                 std::mem::forget(runtime);
+                Self {
+                    notifier,
+                    last_pushed: HashMap::new(),
+                }
             }
-            Err(err) => log::warn!("remote session bridge failed to start: {err}"),
+            Err(err) => {
+                log::warn!("remote session bridge failed to start: {err}");
+                Self {
+                    notifier: None,
+                    last_pushed: HashMap::new(),
+                }
+            }
         }
-        Self
     }
+
+    fn on_cli_agent_event(
+        &mut self,
+        event: &CLIAgentSessionsModelEvent,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(notifier) = self.notifier.clone() else {
+            return;
+        };
+        match event {
+            CLIAgentSessionsModelEvent::StatusChanged {
+                terminal_view_id,
+                agent,
+                status,
+                ..
+            } => {
+                let tag = wechat::status_tag(status);
+                if self.last_pushed.get(terminal_view_id) == Some(&tag) {
+                    return;
+                }
+                let title = session_title(ctx, *terminal_view_id);
+                let Some(text) = wechat::status_notification(agent.display_name(), title, status)
+                else {
+                    return;
+                };
+                if notifier.send(text).is_err() {
+                    log::debug!("wechat channel is not running; dropped an agent status push");
+                    return;
+                }
+                self.last_pushed.insert(*terminal_view_id, tag);
+            }
+            CLIAgentSessionsModelEvent::Ended {
+                terminal_view_id, ..
+            } => {
+                self.last_pushed.remove(terminal_view_id);
+            }
+            CLIAgentSessionsModelEvent::Started { .. }
+            | CLIAgentSessionsModelEvent::InputSessionChanged { .. }
+            | CLIAgentSessionsModelEvent::SessionUpdated { .. } => {}
+        }
+    }
+}
+
+fn session_title(ctx: &mut ModelContext<RemoteSessionBridge>, id: EntityId) -> String {
+    for window_id in ctx.window_ids() {
+        let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) else {
+            continue;
+        };
+        for workspace in workspaces {
+            let workspace_ref = workspace.as_ref(ctx);
+            for (index, tab) in workspace_ref.tabs.iter().enumerate() {
+                let pane_group = tab.pane_group.as_ref(ctx);
+                for view in pane_group.visible_terminal_views(ctx) {
+                    if view.id() == id {
+                        let title = pane_group.display_title(ctx);
+                        return format!("{title}（标签 {}）", index + 1);
+                    }
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 /// Reads the persisted page token, creating a random one on first run.
@@ -97,8 +190,7 @@ async fn serve(state: BridgeState) {
         .with_state(state);
     // Default to all interfaces so a virtual LAN (e.g. 蒲公英/Tailscale) can
     // reach the page; set WARP_REMOTE_BIND=127.0.0.1:9283 to keep it local.
-    let bind_addr =
-        std::env::var("WARP_REMOTE_BIND").unwrap_or_else(|_| "0.0.0.0:9283".to_owned());
+    let bind_addr = std::env::var("WARP_REMOTE_BIND").unwrap_or_else(|_| "0.0.0.0:9283".to_owned());
     let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
         Ok(listener) => listener,
         Err(err) => {
@@ -187,10 +279,7 @@ async fn content(
     }
 }
 
-fn read_content(
-    ctx: &mut ModelContext<RemoteSessionBridge>,
-    id: &str,
-) -> Option<Value> {
+fn read_content(ctx: &mut ModelContext<RemoteSessionBridge>, id: &str) -> Option<Value> {
     let view = find_terminal(ctx, id)?;
     let text = {
         let model = view.as_ref(ctx).model.lock();
@@ -276,6 +365,17 @@ fn tail_chars(text: &str, max_chars: usize) -> String {
         return text.to_owned();
     }
     text.chars().skip(count - max_chars).collect()
+}
+
+fn agent_status(ctx: &mut ModelContext<RemoteSessionBridge>, id: &str) -> String {
+    let Some(view) = find_terminal(ctx, id) else {
+        return "当前会话已关闭，/ls 重新选择".to_owned();
+    };
+    let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(view.id()) else {
+        return "这个会话里没有运行中的 CLI agent".to_owned();
+    };
+    let status = wechat::describe_status(&session.status);
+    format!("{} · {status}", session.agent.display_name())
 }
 
 fn find_terminal(
