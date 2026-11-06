@@ -39,7 +39,7 @@ impl RemoteSessionBridge {
         let token = std::env::var("WARP_REMOTE_TOKEN")
             .ok()
             .filter(|token| !token.is_empty())
-            .unwrap_or_else(|| "warp-dev".to_owned());
+            .unwrap_or_else(load_or_create_token);
         let state = BridgeState {
             spawner: ctx.spawner(),
             token: Arc::from(token),
@@ -59,20 +59,54 @@ impl RemoteSessionBridge {
     }
 }
 
+/// Reads the persisted page token, creating a random one on first run.
+///
+/// The page can read terminal output and send keystrokes, so a guessable
+/// default token would expose any device on the same network.
+fn load_or_create_token() -> String {
+    let dir = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("warp-dev");
+    let path = dir.join("remote-token.txt");
+    if let Ok(token) = std::fs::read_to_string(&path) {
+        let token = token.trim();
+        if !token.is_empty() {
+            return token.to_owned();
+        }
+    }
+    let token: String = (0..32)
+        .map(|_| {
+            let byte = rand::random::<u8>();
+            char::from_digit((byte % 16) as u32, 16).unwrap_or('0')
+        })
+        .collect();
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(&path, format!("{token}\n"));
+    }
+    log::info!("remote session page token written to {}", path.display());
+    token
+}
+
 async fn serve(state: BridgeState) {
     let router = axum::Router::new()
         .route("/", get(page))
         .route("/api/sessions", get(sessions))
         .route("/api/content", get(content))
+        .route("/api/input", axum::routing::post(input))
         .with_state(state);
-    let listener = match tokio::net::TcpListener::bind("127.0.0.1:9283").await {
+    // Default to all interfaces so a virtual LAN (e.g. 蒲公英/Tailscale) can
+    // reach the page; set WARP_REMOTE_BIND=127.0.0.1:9283 to keep it local.
+    let bind_addr =
+        std::env::var("WARP_REMOTE_BIND").unwrap_or_else(|_| "0.0.0.0:9283".to_owned());
+    let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
         Ok(listener) => listener,
         Err(err) => {
-            log::warn!("remote session bridge could not bind 127.0.0.1:9283: {err}");
+            log::warn!("remote session bridge could not bind {bind_addr}: {err}");
             return;
         }
     };
-    log::info!("remote session bridge listening on http://127.0.0.1:9283");
+    log::info!("remote session bridge listening on http://{bind_addr}");
     if let Err(err) = axum::serve(listener, router).await {
         log::warn!("remote session bridge stopped: {err}");
     }
@@ -185,6 +219,55 @@ fn read_content(
         "text": text,
         "readOnly": true,
     }))
+}
+
+#[derive(Deserialize)]
+struct InputBody {
+    id: String,
+    text: String,
+    #[serde(default)]
+    enter: bool,
+}
+
+async fn input(
+    State(state): State<BridgeState>,
+    headers: HeaderMap,
+    Json(body): Json<InputBody>,
+) -> Result<Json<Value>, StatusCode> {
+    if !authorized(&headers, &state.token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let sent = state
+        .spawner
+        .spawn(move |_bridge, ctx| send_input(ctx, &body.id, &body.text, body.enter))
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if !sent {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+fn send_input(
+    ctx: &mut ModelContext<RemoteSessionBridge>,
+    id: &str,
+    text: &str,
+    enter: bool,
+) -> bool {
+    let Some(view) = find_terminal(ctx, id) else {
+        return false;
+    };
+    if view.as_ref(ctx).is_read_only() {
+        return false;
+    }
+    let mut bytes = text.as_bytes().to_vec();
+    if enter {
+        bytes.push(b'\r');
+    }
+    view.update(ctx, |terminal, ctx| {
+        terminal.write_to_pty(bytes, ctx);
+    });
+    true
 }
 
 fn tail_chars(text: &str, max_chars: usize) -> String {
