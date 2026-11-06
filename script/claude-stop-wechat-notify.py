@@ -133,14 +133,27 @@ def notify(payload: dict) -> None:
     )
 
 
+def append_log(message: str) -> None:
+    try:
+        path = config_path().with_name("notify-hook.log")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as log:
+            log.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\n")
+    except OSError:
+        pass
+
+
 def main() -> int:
     payload = read_payload()
+    append_log(f"invoked session={payload.get('session_id')} active={payload.get('stop_hook_active')}")
     # Claude sets this when a Stop hook already triggered another stop.
     if payload.get("stop_hook_active") is True:
         return 0
     try:
         notify(payload)
+        append_log("sent")
     except Exception as err:
+        append_log(f"failed: {err}")
         sys.stderr.buffer.write(f"wechat notify skipped: {err}\n".encode("utf-8", "replace"))
     return 0
 
