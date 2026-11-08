@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#101114">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon.png">
+  <link rel="icon" href="/icon.png">
   <title>Warp 会话</title>
   <style>
     :root {
@@ -17,6 +20,9 @@
       --subtle: #626a79;
       --accent: #dfff4f;
       --accent-soft: rgba(223, 255, 79, .12);
+      --run: #6ee7a0;
+      --blocked: #ff7d6b;
+      --unread: #ffb84d;
       font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
@@ -45,20 +51,32 @@
     }
     .brand-name { font-size: 14px; font-weight: 700; letter-spacing: -.01em; line-height: 1.1; }
     .brand-caption { margin-top: 1px; color: var(--subtle); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
+    .top-actions { display: flex; align-items: center; gap: 6px; }
     .icon-button {
       display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--line);
       border-radius: 10px; color: var(--muted); background: rgba(255, 255, 255, .035);
     }
     .icon-button:disabled { cursor: wait; opacity: .6; }
     .icon-button svg { width: 15px; height: 15px; }
-    .icon-button.loading svg, .viewer-refresh.loading svg { animation: spin .8s linear infinite; }
+    .icon-button.loading svg { animation: spin .8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .ro-badge {
+      padding: 4px 8px; color: var(--unread); background: rgba(255, 184, 77, .12);
+      border: 1px solid rgba(255, 184, 77, .35); border-radius: 8px; font-size: 10px; font-weight: 650;
+    }
+    .ro-badge[hidden] { display: none; }
+    .poll-select {
+      height: 34px; padding: 0 4px; color: var(--muted); font-size: 11px;
+      background: rgba(255, 255, 255, .035); border: 1px solid var(--line); border-radius: 10px;
+    }
 
-    .list-head { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; padding: 2px 2px 0; }
+    .list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; padding: 2px 2px 0; }
     .list-title { color: #cfd5df; font-size: 11px; font-weight: 650; letter-spacing: .02em; }
+    .stats { color: var(--subtle); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .stats.hot { color: var(--blocked); font-weight: 650; }
     .count { color: var(--subtle); font-size: 10px; }
 
-    .sessions { display: grid; gap: 6px; flex: 0 0 auto; max-height: 26vh; overflow-y: auto; overscroll-behavior: contain; }
+    .sessions { display: grid; gap: 6px; flex: 0 0 auto; max-height: 28vh; overflow-y: auto; overscroll-behavior: contain; }
     .session {
       display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px;
       padding: 9px 11px; text-align: left; color: var(--text);
@@ -71,24 +89,39 @@
     .session.active .session-icon { color: var(--accent); background: var(--accent-soft); }
     .session-icon svg { width: 15px; height: 15px; }
     .session-info { min-width: 0; flex: 1; }
-    .session-title { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+    .session-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+    .session-name { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .session-meta { margin-top: 3px; color: var(--subtle); font-size: 10px; }
+    .session-preview {
+      overflow: hidden; margin-top: 2px; color: var(--subtle); font-size: 10px;
+      text-overflow: ellipsis; white-space: nowrap; font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    }
     .chevron { flex: 0 0 auto; color: var(--subtle); transition: transform .18s; }
     .session.active .chevron { transform: rotate(90deg); color: var(--accent); }
     .chevron svg { width: 14px; height: 14px; display: block; }
 
+    .dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
+    .dot-run { background: var(--run); box-shadow: 0 0 6px var(--run); animation: pulse 1.6s ease-in-out infinite; }
+    .dot-blocked { background: var(--blocked); box-shadow: 0 0 6px var(--blocked); animation: pulse 1.1s ease-in-out infinite; }
+    .dot-done { background: var(--subtle); }
+    .dot-unread { background: var(--unread); box-shadow: 0 0 6px var(--unread); }
+    @keyframes pulse { 50% { opacity: .35; } }
+    .agent-chip { flex: 0 0 auto; color: var(--muted); font-size: 9px; font-weight: 600; }
+
     .empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12px; background: rgba(255,255,255,.025); border: 1px dashed var(--line); border-radius: 13px; }
 
     .viewer {
-      display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+      display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; position: relative;
       border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #0d0f13;
     }
     .viewer[hidden] { display: none; }
     .viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 0 0 auto; padding: 8px 11px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.025); }
     .viewer-name { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; font-weight: 600; }
-    .viewer-name > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .live-dot { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-    .badge { flex: 0 0 auto; padding: 2px 6px; color: var(--subtle); background: rgba(255,255,255,.06); border-radius: 5px; font-size: 9px; }
+    .viewer-name > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .live-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--subtle); }
+    .live-dot.run { background: var(--run); box-shadow: 0 0 8px var(--run); animation: pulse 1.6s ease-in-out infinite; }
+    .live-dot.blocked { background: var(--blocked); box-shadow: 0 0 8px var(--blocked); animation: pulse 1.1s ease-in-out infinite; }
+    .viewer-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
     .viewer-refresh { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: transparent; }
     .viewer-refresh svg { width: 13px; height: 13px; }
     .content {
@@ -97,9 +130,53 @@
       font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; tab-size: 4;
     }
     .content.placeholder { color: var(--subtle); }
+    .err-line { color: #ff8d7a; }
     .viewer-foot { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; padding: 6px 11px; color: var(--subtle); font-size: 10px; border-top: 1px solid var(--line); }
+    .jump {
+      position: absolute; right: 12px; bottom: 40px; display: flex; align-items: center; gap: 4px;
+      padding: 6px 10px; color: #171b0b; background: var(--accent); border: 0; border-radius: 999px;
+      font-size: 11px; font-weight: 700; box-shadow: 0 2px 10px rgba(0,0,0,.4);
+    }
+    .jump[hidden] { display: none; }
+    .jump svg { width: 12px; height: 12px; }
+
+    .quick-bar { display: flex; gap: 6px; flex: 0 0 auto; }
+    .quick-bar[hidden] { display: none; }
+    .quick-bar .hint { display: flex; align-items: center; color: var(--blocked); font-size: 10px; font-weight: 650; white-space: nowrap; }
+    .quick-btn {
+      min-width: 38px; height: 32px; padding: 0 10px; color: var(--text);
+      background: var(--surface); border: 1px solid rgba(255, 125, 107, .4); border-radius: 9px; font-size: 12px; font-weight: 650;
+    }
+    .quick-btn:active { background: var(--surface-2); }
+
+    .chips { display: flex; gap: 6px; flex: 0 0 auto; overflow-x: auto; scrollbar-width: none; }
+    .chips::-webkit-scrollbar { display: none; }
+    .chips[hidden] { display: none; }
+    .chip {
+      flex: 0 0 auto; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      height: 28px; padding: 0 10px; color: var(--muted); background: rgba(255,255,255,.045);
+      border: 1px solid var(--line); border-radius: 999px; font-size: 11px;
+    }
+    .chip:active { color: var(--text); background: var(--surface-2); }
+
+    .panel { display: flex; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
+    .panel[hidden] { display: none; }
+    .chip-wrap {
+      display: inline-flex; align-items: center; flex: 0 0 auto; height: 28px; padding-left: 10px;
+      color: var(--muted); background: rgba(255,255,255,.045); border: 1px dashed var(--line); border-radius: 999px;
+    }
+    .chip-wrap .cmd { border: 0; background: transparent; color: inherit; font-size: 11px; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip-x { border: 0; background: transparent; color: var(--subtle); padding: 0 8px 0 4px; font-size: 13px; line-height: 1; }
+    .chip-add { color: var(--accent) !important; border-style: dashed; }
 
     .composer { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+    .composer[hidden] { display: none; }
+    .more {
+      display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto;
+      color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
+    }
+    .more.on { color: var(--accent); border-color: rgba(223,255,79,.5); background: var(--accent-soft); }
+    .more svg { width: 16px; height: 16px; }
     #text {
       min-width: 0; flex: 1; height: 40px; padding: 0 11px; color: var(--text);
       background: var(--surface); border: 1px solid var(--line); border-radius: 11px; font-size: 12.5px;
@@ -110,7 +187,7 @@
     #text::placeholder { color: var(--subtle); }
     #text:disabled { opacity: .5; }
     .send {
-      display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 40px; padding: 0 14px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 40px; padding: 0 14px; flex: 0 0 auto;
       color: #171b0b; background: var(--accent); border: 0; border-radius: 11px; font-size: 12.5px; font-weight: 700;
     }
     .send:disabled { cursor: not-allowed; opacity: .35; }
@@ -118,6 +195,14 @@
     .log { min-height: 14px; flex: 0 0 auto; margin: 0 2px; color: var(--muted); font-size: 10px; }
     .log.error { color: #f29b9b; }
     .log.success { color: #b9df89; }
+
+    .toast {
+      position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 10;
+      padding: 8px 14px; color: var(--text); background: rgba(32, 36, 44, .96); border: 1px solid var(--line);
+      border-radius: 999px; font-size: 12px; transform: translateX(-50%); pointer-events: none;
+      opacity: 0; transition: opacity .18s;
+    }
+    .toast.show { opacity: 1; }
 
     @media (min-width: 600px) {
       .app { padding-top: 14px; }
@@ -137,13 +222,24 @@
           <div class="brand-caption">Remote workspace</div>
         </div>
       </div>
-      <button id="refresh" class="icon-button" type="button" aria-label="刷新会话" title="刷新会话">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
-      </button>
+      <div class="top-actions">
+        <span id="ro-badge" class="ro-badge" hidden>只读模式</span>
+        <select id="poll" class="poll-select" aria-label="刷新频率" title="刷新频率">
+          <option value="1000">1s</option>
+          <option value="2500">2.5s</option>
+          <option value="5000">5s</option>
+          <option value="10000">10s</option>
+          <option value="0">手动</option>
+        </select>
+        <button id="refresh" class="icon-button" type="button" aria-label="刷新会话" title="刷新会话">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
+        </button>
+      </div>
     </header>
 
     <div class="list-head">
       <span class="list-title">已打开的会话</span>
+      <span id="stats" class="stats">CPU — · 内存 —</span>
       <span id="count" class="count">加载中…</span>
     </div>
     <div id="sessions" class="sessions" aria-live="polite"></div>
@@ -152,22 +248,36 @@
     <section id="viewer" class="viewer" hidden aria-label="会话内容">
       <div class="viewer-head">
         <div class="viewer-name">
-          <span class="live-dot"></span>
+          <span id="live-dot" class="live-dot"></span>
           <span id="viewer-title">会话内容</span>
-          <span class="badge">输出</span>
         </div>
-        <button id="content-refresh" class="viewer-refresh" type="button" aria-label="刷新内容" title="刷新内容">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
-        </button>
+        <div class="viewer-actions">
+          <button id="copy" class="viewer-refresh" type="button" aria-label="复制输出" title="复制全部输出">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button id="content-refresh" class="viewer-refresh" type="button" aria-label="刷新内容" title="刷新内容">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-14.7-3L3 11"/><path d="M3 4v7h7"/><path d="M4 13a8.1 8.1 0 0 0 14.7 3L21 13"/><path d="M21 20v-7h-7"/></svg>
+          </button>
+        </div>
       </div>
       <pre id="content" class="content placeholder">暂无可见输出</pre>
+      <button id="jump" class="jump" type="button" hidden>
+        <span>回到最新</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v14"/><path d="m6 13 6 6 6-6"/></svg>
+      </button>
       <div class="viewer-foot">
         <span id="content-status">等待选择会话</span>
-        <span>自动刷新</span>
+        <span id="follow-label">跟随 · 2.5s</span>
       </div>
     </section>
 
-    <form id="composer" class="composer">
+    <div id="quick-bar" class="quick-bar" hidden></div>
+    <div id="panel" class="panel" hidden></div>
+    <div id="chips" class="chips" hidden></div>
+    <form id="composer" class="composer" hidden>
+      <button id="more" class="more" type="button" aria-label="命令面板" title="命令面板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+      </button>
       <input id="text" placeholder="选择会话后可发送指令" autocomplete="off" enterkeyhint="send" disabled>
       <button id="send" class="send" type="submit" disabled>
         <span>发送</span>
@@ -176,6 +286,7 @@
     </form>
     <p id="log" class="log" role="status" aria-live="polite"></p>
   </div>
+  <div id="toast" class="toast" role="status"></div>
 
   <script>
     const token = new URLSearchParams(location.search).get("token") || "warp-dev";
@@ -184,18 +295,55 @@
     const countEl = document.querySelector("#count");
     const refreshButton = document.querySelector("#refresh");
     const contentRefreshButton = document.querySelector("#content-refresh");
+    const copyButton = document.querySelector("#copy");
     const viewerEl = document.querySelector("#viewer");
     const viewerTitle = document.querySelector("#viewer-title");
+    const liveDot = document.querySelector("#live-dot");
     const contentEl = document.querySelector("#content");
     const contentStatus = document.querySelector("#content-status");
+    const jumpButton = document.querySelector("#jump");
+    const quickBar = document.querySelector("#quick-bar");
+    const panelEl = document.querySelector("#panel");
+    const chipsEl = document.querySelector("#chips");
+    const composerEl = document.querySelector("#composer");
+    const moreButton = document.querySelector("#more");
     const textInput = document.querySelector("#text");
     const sendButton = document.querySelector("#send");
     const logEl = document.querySelector("#log");
+    const toastEl = document.querySelector("#toast");
+    const roBadge = document.querySelector("#ro-badge");
+    const pollSelect = document.querySelector("#poll");
+    const followLabel = document.querySelector("#follow-label");
+    const statsEl = document.querySelector("#stats");
+    const wantedSession = new URLSearchParams(location.search).get("session");
+    let pendingHandled = false;
     let selected = null;
     let sessions = [];
+    let readOnlyBridge = false;
     let contentLoading = false;
     let sending = false;
+    let lastContent = "";
+    let contentVersion = "";
+    let sessionsVersion = "";
+    let contentEpoch = 0;
     const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+    // Tail signature per session, for unread markers; populated on first sight
+    // so initial load never marks anything unread.
+    const seenTails = new Map();
+    const unread = new Set();
+
+    const SLASH_COMMANDS = [
+      "/model", "/compact", "/clear", "/cost", "/review", "/resume",
+      "/agents", "/memory", "/config", "/permissions", "/mcp", "/doctor", "/help", "/init",
+    ];
+    const QUICK_REPLIES = [
+      { label: "1", text: "1", enter: true },
+      { label: "2", text: "2", enter: true },
+      { label: "y", text: "y", enter: true },
+      { label: "n", text: "n", enter: true },
+      { label: "Esc", text: "\u001b", enter: false },
+      { label: "Ctrl+C", text: "\u0003", enter: false },
+    ];
 
     const terminalIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>';
     const chevronIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>';
@@ -205,8 +353,26 @@
       logEl.className = `log ${kind}`;
     }
 
+    let toastTimer = 0;
+    function toast(message) {
+      toastEl.textContent = message;
+      toastEl.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1400);
+    }
+
     function selectedSession() {
       return sessions.find((item) => item.id === selected) || null;
+    }
+
+    function statusDotClass(status) {
+      if (status === "in_progress") return "dot-run";
+      if (status === "blocked") return "dot-blocked";
+      return "dot-done";
+    }
+
+    function agentOf(session) {
+      return session.agent && session.agent.name ? session.agent : null;
     }
 
     function renderSessions() {
@@ -215,13 +381,21 @@
       emptyEl.hidden = sessions.length !== 0;
       if (selected && !sessions.some((item) => item.id === selected)) selected = null;
       for (const session of sessions) {
+        const agent = agentOf(session);
         const button = document.createElement("button");
         button.type = "button";
         button.className = `session${session.id === selected ? " active" : ""}`;
         button.dataset.id = session.id;
         button.setAttribute("aria-expanded", String(session.id === selected));
-        button.innerHTML = `<span class="session-icon">${terminalIcon}</span><span class="session-info"><span class="session-title"></span><span class="session-meta">标签 ${session.tab}${session.readOnly ? " · 只读" : ""}</span></span><span class="chevron">${chevronIcon}</span>`;
-        button.querySelector(".session-title").textContent = session.title || `标签 ${session.tab}`;
+        const badge = unread.has(session.id)
+          ? '<span class="dot dot-unread" title="有新输出"></span>'
+          : agent ? `<span class="dot ${statusDotClass(agent.status)}"></span>` : "";
+        const chip = agent ? `<span class="agent-chip">${agent.name}</span>` : "";
+        const meta = `标签 ${session.tab}${session.readOnly ? " · 只读" : ""}`;
+        const preview = session.tail ? session.tail.replace(/\s+/g, " ").trim().slice(-90) : "";
+        button.innerHTML = `<span class="session-icon">${terminalIcon}</span><span class="session-info"><span class="session-title">${badge}<span class="session-name"></span>${chip}</span><span class="session-meta">${meta}</span>${preview ? `<span class="session-preview"></span>` : ""}</span><span class="chevron">${chevronIcon}</span>`;
+        button.querySelector(".session-name").textContent = session.title || `标签 ${session.tab}`;
+        if (preview) button.querySelector(".session-preview").textContent = preview;
         button.addEventListener("click", () => toggleSession(session.id));
         sessionsEl.appendChild(button);
       }
@@ -231,22 +405,168 @@
     function updateViewer() {
       const session = selectedSession();
       viewerEl.hidden = !session;
+      quickBar.hidden = !session || readOnlyBridge;
+      composerEl.hidden = !session || readOnlyBridge;
+      chipsEl.hidden = !session || readOnlyBridge;
       if (!session) {
         contentStatus.textContent = "等待选择会话";
         textInput.disabled = true;
         sendButton.disabled = true;
         textInput.placeholder = "选择会话后可发送指令";
+        renderQuickBar(null);
         return;
       }
       viewerTitle.textContent = session.title || `标签 ${session.tab}`;
-      const enabled = !session.readOnly;
+      const agent = agentOf(session);
+      liveDot.className = `live-dot${agent ? ` ${agent.status === "in_progress" ? "run" : agent.status === "blocked" ? "blocked" : ""}` : ""}`;
+      renderQuickBar(agent);
+      renderChips();
+      const enabled = !session.readOnly && !readOnlyBridge;
       textInput.disabled = !enabled || sending;
       sendButton.disabled = !enabled || sending;
-      textInput.placeholder = enabled ? "点此输入指令" : "该会话为只读";
+      textInput.placeholder = enabled ? "点此输入指令" : readOnlyBridge ? "页面处于只读模式" : "该会话为只读";
       // On touch devices focusing pops the on-screen keyboard and squeezes
       // the output; on desktop there is no keyboard, so keep typing friction
       // at zero.
       if (enabled && finePointer && !sending) textInput.focus();
+    }
+
+    function renderQuickBar(agent) {
+      quickBar.replaceChildren();
+      if (!agent || agent.status !== "blocked") return;
+      const hint = document.createElement("span");
+      hint.className = "hint";
+      hint.textContent = "等待你操作：";
+      quickBar.appendChild(hint);
+      for (const reply of QUICK_REPLIES) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quick-btn";
+        button.textContent = reply.label;
+        button.addEventListener("click", () => sendRaw(reply.text, reply.enter, reply.label));
+        quickBar.appendChild(button);
+      }
+    }
+
+    function historyKey() {
+      return `warp-history-${selected || "none"}`;
+    }
+
+    function loadHistory() {
+      try {
+        const value = JSON.parse(localStorage.getItem(historyKey()) || "[]");
+        return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function pushHistory(command, sessionId) {
+      if (!command || command < " ") return;
+      const key = `warp-history-${sessionId || selected || "none"}`;
+      let history;
+      try {
+        const value = JSON.parse(localStorage.getItem(key) || "[]");
+        history = Array.isArray(value) ? value.filter((item) => item !== command) : [];
+      } catch {
+        history = [];
+      }
+      history.unshift(command);
+      localStorage.setItem(key, JSON.stringify(history.slice(0, 12)));
+      renderChips();
+    }
+
+    function renderChips() {
+      chipsEl.replaceChildren();
+      const history = loadHistory();
+      chipsEl.hidden = !selectedSession() || readOnlyBridge || history.length === 0;
+      for (const command of history) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = command;
+        chip.title = command;
+        chip.addEventListener("click", () => {
+          textInput.value = command;
+          textInput.focus();
+        });
+        chipsEl.appendChild(chip);
+      }
+    }
+
+    function loadCustomCommands() {
+      try {
+        const value = JSON.parse(localStorage.getItem("warp-custom-commands") || "[]");
+        return Array.isArray(value) ? value.filter((item) => typeof item === "string").slice(0, 10) : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveCustomCommands(list) {
+      localStorage.setItem("warp-custom-commands", JSON.stringify(list));
+    }
+
+    function fillCommand(command) {
+      textInput.value = command;
+      panelEl.hidden = true;
+      moreButton.classList.remove("on");
+      textInput.focus();
+    }
+
+    function renderPanel() {
+      panelEl.replaceChildren();
+      const addChip = (command, onPick) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = command;
+        chip.addEventListener("click", onPick);
+        panelEl.appendChild(chip);
+      };
+      for (const command of SLASH_COMMANDS) addChip(command, () => fillCommand(command));
+      for (const command of loadCustomCommands()) {
+        const wrap = document.createElement("span");
+        wrap.className = "chip-wrap";
+        const cmd = document.createElement("button");
+        cmd.type = "button";
+        cmd.className = "cmd";
+        cmd.textContent = command;
+        cmd.title = command;
+        cmd.addEventListener("click", () => fillCommand(command));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "chip-x";
+        remove.setAttribute("aria-label", `删除 ${command}`);
+        remove.textContent = "×";
+        remove.addEventListener("click", () => {
+          saveCustomCommands(loadCustomCommands().filter((item) => item !== command));
+          renderPanel();
+        });
+        wrap.append(cmd, remove);
+        panelEl.appendChild(wrap);
+      }
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "chip chip-add";
+      add.textContent = "＋ 自定义";
+      add.addEventListener("click", () => {
+        const value = prompt("输入快捷命令（回车保存）");
+        const command = value && value.trim();
+        if (!command) return;
+        const list = loadCustomCommands().filter((item) => item !== command);
+        list.unshift(command);
+        saveCustomCommands(list);
+        renderPanel();
+      });
+      panelEl.appendChild(add);
+    }
+
+    function markSeen(session, tail) {
+      const value = tail === undefined ? session && session.tail : tail;
+      if (value === undefined || value === null) return;
+      seenTails.set(session.id, value);
+      unread.delete(session.id);
     }
 
     function toggleSession(id) {
@@ -257,9 +577,48 @@
         return;
       }
       selected = id;
+      contentVersion = "";
+      lastContent = "";
+      const session = selectedSession();
+      if (session) markSeen(session);
       renderSessions();
       if (!finePointer) textInput.blur();
       loadContent();
+    }
+
+    function nearBottom() {
+      return contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight < 48;
+    }
+
+    function syncJumpButton() {
+      jumpButton.hidden = viewerEl.hidden || nearBottom();
+    }
+
+    const ERROR_LINE = /(error|failed|failure|panic|fatal|exception|traceback|denied|错误|失败)/i;
+
+    function renderContent(text) {
+      const fragment = document.createDocumentFragment();
+      const lines = text.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line && ERROR_LINE.test(line)) {
+          const span = document.createElement("span");
+          span.className = "err-line";
+          span.textContent = line;
+          fragment.appendChild(span);
+        } else {
+          fragment.appendChild(document.createTextNode(line));
+        }
+        if (i < lines.length - 1) fragment.appendChild(document.createTextNode("\n"));
+      }
+      contentEl.replaceChildren(fragment);
+    }
+
+    function updateStats(stats) {
+      if (!stats || typeof stats.cpu !== "number") return;
+      const mem = stats.memTotal > 0 ? Math.round((stats.memUsed / stats.memTotal) * 100) : 0;
+      statsEl.textContent = `CPU ${Math.round(stats.cpu)}% · 内存 ${mem}%`;
+      statsEl.classList.toggle("hot", stats.cpu >= 85 || mem >= 90);
     }
 
     async function loadContent() {
@@ -268,17 +627,38 @@
       contentLoading = true;
       contentRefreshButton.classList.add("loading");
       contentRefreshButton.disabled = true;
-      const nearBottom = contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight < 48;
+      const stick = nearBottom();
+      // Guard against slow-VPN races: if the user switches sessions while this
+      // fetch is in flight, the stale response must not render.
+      const requestId = ++contentEpoch;
       try {
-        const response = await fetch(`/api/content?id=${encodeURIComponent(session.id)}`, { headers: { "x-warp-token": token } });
+        const url = `/api/content?id=${encodeURIComponent(session.id)}&v=${encodeURIComponent(contentVersion)}`;
+        const response = await fetch(url, { headers: { "x-warp-token": token } });
         const body = await response.json();
+        if (requestId !== contentEpoch || selected !== session.id) return;
         if (!response.ok) throw new Error(body.error || "读取会话内容失败");
+        contentFailures = 0;
+        if (body.changed === false) {
+          contentStatus.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+          return;
+        }
         const text = (body.content && body.content.text) || "";
-        contentEl.classList.toggle("placeholder", !text);
-        contentEl.textContent = text || "暂无可见输出";
-        if (nearBottom) contentEl.scrollTop = contentEl.scrollHeight;
+        contentVersion = (body.content && body.content.version) || "";
+        if (text !== lastContent) {
+          lastContent = text;
+          contentEl.classList.toggle("placeholder", !text);
+          if (text) renderContent(text);
+          else contentEl.textContent = "暂无可见输出";
+          if (stick) contentEl.scrollTop = contentEl.scrollHeight;
+          // Code-point slice to match the server's char-based tail; a UTF-16
+          // slice would mismatch on emoji and cause phantom unread dots.
+          markSeen(session, Array.from(text).slice(-160).join(""));
+        }
         contentStatus.textContent = `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+        syncJumpButton();
       } catch (error) {
+        // 断链/卡顿时指数退避，避免在慢速隧道上按固定频率硬打。
+        contentFailures = Math.min(contentFailures + 1, 5);
         contentStatus.textContent = "更新失败";
         log(error.message || "读取会话内容失败", "error");
       } finally {
@@ -293,15 +673,43 @@
       refreshButton.disabled = true;
       countEl.textContent = "加载中…";
       try {
-        const response = await fetch("/api/sessions", { headers: { "x-warp-token": token } });
+        const response = await fetch(`/api/sessions?v=${encodeURIComponent(sessionsVersion)}`, { headers: { "x-warp-token": token } });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "无法读取会话");
+        sessionsFailures = 0;
+        updateStats(body.stats);
+        if (body.changed === false) {
+          countEl.textContent = `${sessions.length} 个`;
+          return;
+        }
         sessions = Array.isArray(body.sessions) ? body.sessions : [];
+        sessionsVersion = body.version || "";
+        readOnlyBridge = body.readOnlyBridge === true;
+        roBadge.hidden = !readOnlyBridge;
+        for (const session of sessions) {
+          if (seenTails.has(session.id)) {
+            if (seenTails.get(session.id) !== session.tail && session.id !== selected) unread.add(session.id);
+          } else {
+            seenTails.set(session.id, session.tail);
+          }
+        }
+        // WeChat pushes deep-link here with ?session=<id>; open it once the
+        // list actually contains that terminal.
+        if (!pendingHandled && wantedSession && sessions.some((item) => item.id === wantedSession)) {
+          pendingHandled = true;
+          selected = wantedSession;
+          const target = selectedSession();
+          if (target) markSeen(target);
+        }
         renderSessions();
         if (selected) loadContent();
       } catch (error) {
+        sessionsFailures = Math.min(sessionsFailures + 1, 5);
         sessions = [];
         selected = null;
+        // Drop the version too, or the next poll sends the stale ?v= and the
+        // unchanged {changed:false} answer wedges the page on an empty list.
+        sessionsVersion = "";
         renderSessions();
         log(error.message || "连接 Warp 失败", "error");
       } finally {
@@ -310,8 +718,71 @@
       }
     }
 
+    async function copyOutput() {
+      const text = lastContent || contentEl.textContent || "";
+      if (!text.trim()) {
+        toast("没有可复制的内容");
+        return;
+      }
+      let ok = false;
+      try {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } catch {
+        // 蒲公英/局域网走 http，没有 clipboard API；退回隐藏 textarea 方案。
+        const helper = document.createElement("textarea");
+        helper.value = text;
+        helper.style.position = "fixed";
+        helper.style.opacity = "0";
+        document.body.appendChild(helper);
+        helper.focus();
+        helper.select();
+        ok = document.execCommand("copy");
+        helper.remove();
+      }
+      toast(ok ? "已复制全部输出" : "复制失败");
+    }
+
+    async function postInput(session, text, enter) {
+      const response = await fetch("/api/input", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-warp-token": token },
+        body: JSON.stringify({ id: session.id, text, enter }),
+      });
+      if (response.status === 403) throw new Error("页面处于只读模式");
+      if (!response.ok) throw new Error("发送失败，请确认会话仍然打开");
+    }
+
+    async function sendRaw(text, enter, label) {
+      const session = selectedSession();
+      if (!session || sending) return;
+      sending = true;
+      sendButton.disabled = true;
+      try {
+        await postInput(session, text, enter);
+        log(`已发送 ${label}`, "success");
+        setTimeout(loadContent, 600);
+      } catch (error) {
+        log(error.message || "发送失败", "error");
+      } finally {
+        sending = false;
+        updateViewer();
+      }
+    }
+
     refreshButton.addEventListener("click", loadSessions);
     contentRefreshButton.addEventListener("click", loadContent);
+    copyButton.addEventListener("click", copyOutput);
+    jumpButton.addEventListener("click", () => {
+      contentEl.scrollTop = contentEl.scrollHeight;
+      syncJumpButton();
+    });
+    contentEl.addEventListener("scroll", syncJumpButton, { passive: true });
+    moreButton.addEventListener("click", () => {
+      const open = panelEl.hidden;
+      panelEl.hidden = !open;
+      moreButton.classList.toggle("on", open);
+    });
 
     // Track the real on-screen viewport so the composer sits right above the
     // keyboard and the output area shrinks smoothly instead of being pushed
@@ -324,9 +795,9 @@
         if (viewport.scale !== 1) return;
         // Measure against the pre-shrink geometry, then swap the height, so
         // "was at bottom" survives the keyboard opening.
-        const nearBottom = contentEl.scrollHeight - contentEl.scrollTop - contentEl.clientHeight < 48;
+        const stick = nearBottom();
         document.documentElement.style.setProperty("--vvh", `${viewport.height}px`);
-        if (nearBottom) contentEl.scrollTop = contentEl.scrollHeight;
+        if (stick) contentEl.scrollTop = contentEl.scrollHeight;
       };
       viewport.addEventListener("resize", syncViewport);
       syncViewport();
@@ -336,7 +807,7 @@
     contentEl.addEventListener("click", () => {
       if (document.activeElement === textInput) textInput.blur();
     });
-    document.querySelector("#composer").addEventListener("submit", async (event) => {
+    composerEl.addEventListener("submit", async (event) => {
       event.preventDefault();
       const session = selectedSession();
       if (!session || sending) return;
@@ -346,14 +817,13 @@
       // POST is in flight and would otherwise re-enable the button.
       sending = true;
       sendButton.disabled = true;
+      // Capture the id now: if the user switches sessions while the POST is
+      // in flight, the history entry still belongs to the terminal it ran in.
+      const sentTo = session.id;
       try {
-        const response = await fetch("/api/input", {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-warp-token": token },
-          body: JSON.stringify({ id: session.id, text, enter: true }),
-        });
-        if (!response.ok) throw new Error("发送失败，请确认会话仍然打开");
+        await postInput(session, text, true);
         textInput.value = "";
+        pushHistory(text.trim(), sentTo);
         log("指令已发送", "success");
         setTimeout(loadContent, 600);
       } catch (error) {
@@ -363,9 +833,67 @@
         updateViewer();
       }
     });
-    setInterval(() => {
-      if (selected && !document.hidden) loadContent();
-    }, 2500);
+    // 刷新频率可调：慢速隧道（蒲公英等）可放慢或切手动，避免页面拖垮网络。
+    // Number(null) === 0 would make "手动" the accidental first-visit default,
+    // so only honor an explicitly stored value.
+    const storedPoll = localStorage.getItem("warp-poll-ms");
+    let pollMs = storedPoll !== null && [1000, 2500, 5000, 10000, 0].includes(Number(storedPoll))
+      ? Number(storedPoll)
+      : 2500;
+    pollSelect.value = String(pollMs);
+    let contentFailures = 0;
+    let sessionsFailures = 0;
+    let contentTimer = 0;
+    let sessionsTimer = 0;
+    const backoff = (base, failures) => (failures ? Math.min(base * 2 ** failures, 30000) : base);
+
+    function followLabelText() {
+      return pollMs === 0 ? "手动刷新" : `跟随 · ${pollMs >= 1000 ? `${pollMs / 1000}s` : `${pollMs}ms`}`;
+    }
+
+    function scheduleContent() {
+      clearTimeout(contentTimer);
+      if (pollMs === 0) return;
+      contentTimer = setTimeout(async () => {
+        if (!document.hidden && selected) await loadContent();
+        scheduleContent();
+      }, backoff(pollMs, contentFailures));
+    }
+
+    function scheduleSessions() {
+      clearTimeout(sessionsTimer);
+      if (pollMs === 0) return;
+      const base = Math.max(pollMs * 2, 4000);
+      sessionsTimer = setTimeout(async () => {
+        if (!document.hidden) await loadSessions();
+        scheduleSessions();
+      }, backoff(base, sessionsFailures));
+    }
+
+    function restartPolling() {
+      scheduleContent();
+      scheduleSessions();
+    }
+
+    pollSelect.addEventListener("change", () => {
+      pollMs = Number(pollSelect.value);
+      localStorage.setItem("warp-poll-ms", String(pollMs));
+      followLabel.textContent = followLabelText();
+      restartPolling();
+      toast(pollMs === 0 ? "已切为手动刷新" : `刷新频率：${pollMs / 1000}s`);
+    });
+    followLabel.textContent = followLabelText();
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      loadSessions();
+      if (selected) loadContent();
+    });
+    restartPolling();
+    // The manifest must carry the token into start_url, or a home-screen
+    // launch lands on an unauthenticated page.
+    document.querySelector('link[rel="manifest"]').href =
+      `/manifest.webmanifest?token=${encodeURIComponent(token)}`;
+    renderPanel();
     loadSessions();
   </script>
 </body>

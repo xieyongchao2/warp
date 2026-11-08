@@ -190,6 +190,12 @@ pub(super) async fn run(
     if config.base_url.is_empty() {
         config.base_url = DEFAULT_BASE_URL.to_owned();
     }
+    // Terminal ids are per-process; a persisted activeSession from a previous
+    // run would very likely address an unrelated terminal after restart.
+    if !config.active_session.is_empty() {
+        config.active_session.clear();
+        save_config(&config);
+    }
     let http = match reqwest::Client::builder().timeout(POLL_TIMEOUT).build() {
         Ok(http) => http,
         Err(err) => {
@@ -211,8 +217,14 @@ pub(super) async fn run(
         // away instead of waiting out the poll timeout.
         tokio::select! {
             Some(text) = notifications.recv() => {
+                // A dropped approval push strands the agent with no retry, so
+                // give it the same second chance command replies get.
                 if let Err(err) = send_reply(&http, &config, &text).await {
                     log::warn!("wechat channel failed to push agent status: {err}");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    if let Err(retry_err) = send_reply(&http, &config, &text).await {
+                        log::error!("wechat channel status push retry failed: {retry_err}");
+                    }
                 }
             }
             result = get_updates(&http, &config) => match result {
@@ -297,10 +309,6 @@ async fn handle_message(
     }
     if let Err(err) = send_reply(http, config, &reply).await {
         log::warn!("wechat channel failed to reply: {err}");
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        if let Err(retry_err) = send_reply(http, config, &reply).await {
-            log::error!("wechat channel reply retry failed: {retry_err}");
-        }
     }
 }
 
@@ -399,9 +407,6 @@ async fn dispatch(
                 Err(_) => "暂时无法读取会话".to_owned(),
             }
         }
-        Command::Unknown(command) => {
-            format!("未知指令 {command}\n\n{}", help_text())
-        }
     }
 }
 
@@ -411,6 +416,11 @@ async fn send_to_active(
     bytes: &[u8],
     enter: bool,
 ) -> String {
+    // Read-only mode must gate this path too, or WeChat could type into
+    // terminals while the page refuses every keystroke.
+    if super::read_only_mode() {
+        return "只读模式已开启，无法发送".to_owned();
+    }
     if config.active_session.is_empty() {
         return "还没有选择会话，先 /use <编号>".to_owned();
     }
@@ -440,7 +450,8 @@ Warp 微信指令
 /status  查看当前会话的 agent 状态
 /stop  发送 Ctrl+C
 /help  帮助
-直接发文本等于 /send"
+直接发文本等于 /send
+其它 / 开头的内容（如 Claude 的 /model）会原样发给当前会话"
         .to_owned()
 }
 
@@ -454,7 +465,6 @@ enum Command {
     Tail(usize),
     Status,
     Grep(String),
-    Unknown(String),
 }
 
 fn parse_command(text: &str) -> Command {
@@ -479,7 +489,9 @@ fn parse_command(text: &str) -> Command {
                 .filter(|lines| *lines > 0)
                 .unwrap_or(DEFAULT_TAIL_LINES),
         ),
-        other => Command::Unknown(other.to_owned()),
+        // Unrecognized `/`-prefixed text is not ours to answer for: pass it
+        // through so in-terminal agents (e.g. Claude's `/model`) receive it.
+        _ => Command::Send(trimmed.to_owned()),
     }
 }
 
@@ -573,11 +585,13 @@ pub(super) fn describe_status(status: &CLIAgentSessionStatus) -> String {
 /// states that are not worth interrupting the user for.
 pub(super) fn status_notification(
     agent: &str,
-    title: String,
+    title: &str,
     status: &CLIAgentSessionStatus,
+    tail: &str,
+    url: &str,
 ) -> Option<String> {
     let hint = match status {
-        CLIAgentSessionStatus::Blocked { .. } => "直接回复 1 / 2 或 /send <内容>，/tail 查看上下文",
+        CLIAgentSessionStatus::Blocked { .. } => "微信回复 1 / 2 或 /send <内容>",
         CLIAgentSessionStatus::Success => "/tail 查看输出",
         CLIAgentSessionStatus::Failed { .. } => "/tail 查看完整输出",
         CLIAgentSessionStatus::InProgress | CLIAgentSessionStatus::Cancelled => return None,
@@ -587,7 +601,20 @@ pub(super) fn status_notification(
     } else {
         format!("{agent} · {title}")
     };
-    Some(format!("【{label}】{}\n{hint}", describe_status(status)))
+    let mut text = format!("【{label}】{}\n{hint}", describe_status(status));
+    // States that need a look before acting get the recent output inline, so
+    // most decisions can be made without opening anything.
+    if matches!(
+        status,
+        CLIAgentSessionStatus::Failed { .. } | CLIAgentSessionStatus::Blocked { .. }
+    ) && !tail.is_empty()
+    {
+        text.push_str("\n── 最近输出 ──\n");
+        text.push_str(tail);
+    }
+    text.push_str("\n手机页：");
+    text.push_str(url);
+    Some(text)
 }
 
 fn grep_lines(text: &str, pattern: &str) -> String {
@@ -785,37 +812,62 @@ async fn send_reply(
     let to = config.user_id.clone();
     let context_token = context_token.clone();
     for chunk in chunk_text(text) {
-        let url = format!(
-            "{}/ilink/bot/sendmessage",
-            config.base_url.trim_end_matches('/')
-        );
-        let client_id = format!(
-            "warpch:{}-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or_default(),
-            rand::random::<u32>()
-        );
-        let body = json!({
-            "msg": {
-                "from_user_id": "",
-                "to_user_id": to,
-                "client_id": client_id,
-                "message_type": 2,
-                "message_state": 2,
-                "item_list": [{ "type": 1, "text_item": { "text": chunk } }],
-                "context_token": context_token,
-            },
-            "base_info": { "channel_version": CHANNEL_VERSION, "bot_agent": BOT_AGENT },
-        });
-        let response = post_json(http, &url, &config.token, &body).await?;
-        if response.ret.is_some_and(|ret| ret != 0) {
-            return Err(format!(
-                "sendmessage ret={} errmsg={}",
-                response.ret.unwrap_or_default(),
-                response.errmsg.unwrap_or_default()
-            ));
+        // Retry per chunk, not per message: re-running the whole send would
+        // duplicate chunks that were already delivered.
+        let mut attempt = 0;
+        loop {
+            let url = format!(
+                "{}/ilink/bot/sendmessage",
+                config.base_url.trim_end_matches('/')
+            );
+            let client_id = format!(
+                "warpch:{}-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or_default(),
+                rand::random::<u32>()
+            );
+            let body = json!({
+                "msg": {
+                    "from_user_id": "",
+                    "to_user_id": to,
+                    "client_id": client_id,
+                    "message_type": 2,
+                    "message_state": 2,
+                    "item_list": [{ "type": 1, "text_item": { "text": chunk } }],
+                    "context_token": context_token,
+                },
+                "base_info": { "channel_version": CHANNEL_VERSION, "bot_agent": BOT_AGENT },
+            });
+            match post_json(http, &url, &config.token, &body).await {
+                Ok(response) => {
+                    // ret==0 with an errcode still means undelivered (e.g. -14
+                    // session timeout), the same channel get_updates trusts.
+                    if response.errcode.is_some_and(|code| code != 0) {
+                        return Err(format!(
+                            "sendmessage errcode={} errmsg={}",
+                            response.errcode.unwrap_or_default(),
+                            response.errmsg.unwrap_or_default()
+                        ));
+                    }
+                    if response.ret.is_some_and(|ret| ret != 0) {
+                        return Err(format!(
+                            "sendmessage ret={} errmsg={}",
+                            response.ret.unwrap_or_default(),
+                            response.errmsg.unwrap_or_default()
+                        ));
+                    }
+                    break;
+                }
+                Err(err) => {
+                    attempt += 1;
+                    if attempt > 1 {
+                        return Err(err);
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
         }
     }
     Ok(())

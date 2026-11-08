@@ -210,6 +210,7 @@ tikv-jemallocator = { version = "0.6", optional = true, features = [
 ] }
 toml = "0.8.13"
 toml_edit.workspace = true
+tower-http = { workspace = true, features = ["compression-gzip"] }
 tracing.workspace = true
 tracing-futures = { workspace = true, features = ["futures-03"] }
 ui_components.workspace = true

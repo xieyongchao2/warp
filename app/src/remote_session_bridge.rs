@@ -23,12 +23,15 @@ use crate::workspace::Workspace;
 mod wechat;
 
 const PAGE: &str = include_str!("remote_session_page.html");
+const ICON: &[u8] = include_bytes!("../channels/oss/icon/no-padding/512x512.png");
 const MAX_CONTENT_CHARS: usize = 24_000;
+const PREVIEW_CHARS: usize = 160;
 
 #[derive(Clone)]
 struct BridgeState {
     spawner: ModelSpawner<RemoteSessionBridge>,
     token: Arc<str>,
+    read_only: bool,
 }
 
 pub struct RemoteSessionBridge {
@@ -37,6 +40,8 @@ pub struct RemoteSessionBridge {
     notifier: Option<UnboundedSender<String>>,
     /// Last pushed status tag per terminal, so a repeated status does not re-notify.
     last_pushed: HashMap<EntityId, &'static str>,
+    /// `http://host:port/?token=…` prefix for deep links in WeChat pushes.
+    page_url_base: String,
 }
 
 impl Entity for RemoteSessionBridge {
@@ -54,6 +59,7 @@ impl RemoteSessionBridge {
         let state = BridgeState {
             spawner: ctx.spawner(),
             token: Arc::from(token),
+            read_only: read_only_mode(),
         };
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
@@ -77,6 +83,7 @@ impl RemoteSessionBridge {
                 Self {
                     notifier,
                     last_pushed: HashMap::new(),
+                    page_url_base: page_url_base(&state.token),
                 }
             }
             Err(err) => {
@@ -84,6 +91,7 @@ impl RemoteSessionBridge {
                 Self {
                     notifier: None,
                     last_pushed: HashMap::new(),
+                    page_url_base: String::new(),
                 }
             }
         }
@@ -104,20 +112,25 @@ impl RemoteSessionBridge {
                 status,
                 ..
             } => {
+                // Record every status, not just pushed ones: otherwise
+                // Blocked → InProgress → Blocked is deduped away and the
+                // second approval request never reaches WeChat.
                 let tag = wechat::status_tag(status);
                 if self.last_pushed.get(terminal_view_id) == Some(&tag) {
                     return;
                 }
+                self.last_pushed.insert(*terminal_view_id, tag);
                 let title = session_title(ctx, *terminal_view_id);
-                let Some(text) = wechat::status_notification(agent.display_name(), title, status)
+                let tail = push_tail(ctx, *terminal_view_id);
+                let url = format!("{}&session={terminal_view_id}", self.page_url_base);
+                let Some(text) =
+                    wechat::status_notification(agent.display_name(), &title, status, &tail, &url)
                 else {
                     return;
                 };
                 if notifier.send(text).is_err() {
                     log::debug!("wechat channel is not running; dropped an agent status push");
-                    return;
                 }
-                self.last_pushed.insert(*terminal_view_id, tag);
             }
             CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id, ..
@@ -152,6 +165,66 @@ fn session_title(ctx: &mut ModelContext<RemoteSessionBridge>, id: EntityId) -> S
     String::new()
 }
 
+/// When `WARP_REMOTE_READONLY=1`, the page can view output but every keystroke
+/// endpoint is refused — a safe mode for sharing the URL more widely.
+fn read_only_mode() -> bool {
+    std::env::var("WARP_REMOTE_READONLY")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Base URL (with token) for deep links embedded in WeChat pushes.
+///
+/// `WARP_REMOTE_URL` wins because VPN adapters (蒲公英 etc.) are usually not
+/// the primary outbound interface and cannot be auto-detected reliably.
+fn page_url_base(token: &str) -> String {
+    let base = std::env::var("WARP_REMOTE_URL")
+        .ok()
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| format!("http://{}:{}", primary_lan_ip(), bridge_port()));
+    format!("{}/?token={token}", base.trim_end_matches('/'))
+}
+
+fn bridge_port() -> String {
+    std::env::var("WARP_REMOTE_BIND")
+        .ok()
+        .and_then(|bind| bind.rsplit(':').next().map(str::to_owned))
+        .filter(|port| !port.is_empty())
+        .unwrap_or_else(|| "9283".to_owned())
+}
+
+/// Primary outbound IPv4 without sending packets; a UDP `connect` only picks
+/// the route. 223.5.5.5 (AliDNS) is reachable from mainland networks.
+fn primary_lan_ip() -> String {
+    let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") else {
+        return "127.0.0.1".to_owned();
+    };
+    if socket.connect("223.5.5.5:80").is_err() {
+        return "127.0.0.1".to_owned();
+    }
+    socket
+        .local_addr()
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_owned())
+}
+
+/// Host CPU/memory for the page's resource strip.
+fn host_stats() -> Value {
+    use sysinfo::System;
+    static SYSTEM: std::sync::LazyLock<std::sync::Mutex<System>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(System::new()));
+    let mut system = SYSTEM
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    system.refresh_memory();
+    system.refresh_cpu_usage();
+    json!({
+        "cpu": system.global_cpu_usage().round().clamp(0., 100.) as i64,
+        "memUsed": system.used_memory(),
+        "memTotal": system.total_memory(),
+    })
+}
+
 /// Reads the persisted page token, creating a random one on first run.
 ///
 /// The page can read terminal output and send keystrokes, so a guessable
@@ -182,11 +255,16 @@ fn load_or_create_token() -> String {
 }
 
 async fn serve(state: BridgeState) {
+    // Terminal text compresses several-fold, which matters on the slow VPN
+    // links (蒲公英 etc.) this page is usually reached through.
     let router = axum::Router::new()
         .route("/", get(page))
+        .route("/manifest.webmanifest", get(manifest))
+        .route("/icon.png", get(icon))
         .route("/api/sessions", get(sessions))
         .route("/api/content", get(content))
         .route("/api/input", axum::routing::post(input))
+        .layer(tower_http::compression::CompressionLayer::new())
         .with_state(state);
     // Default to all interfaces so a virtual LAN (e.g. 蒲公英/Tailscale) can
     // reach the page; set WARP_REMOTE_BIND=127.0.0.1:9283 to keep it local.
@@ -208,6 +286,32 @@ async fn page() -> Html<&'static str> {
     Html(PAGE)
 }
 
+async fn manifest(Query(query): Query<ManifestQuery>) -> Json<Value> {
+    // Echo the page token back into start_url so a home-screen launch keeps
+    // authenticating; the manifest itself is public (it names the app, nothing else).
+    let start_url = if query.token.is_empty() {
+        "/".to_owned()
+    } else {
+        format!("/?token={}", query.token)
+    };
+    Json(json!({
+        "name": "Warp 会话",
+        "short_name": "Warp",
+        "start_url": start_url,
+        "display": "standalone",
+        "background_color": "#101114",
+        "theme_color": "#101114",
+        "icons": [{ "src": "/icon.png", "sizes": "512x512", "type": "image/png" }],
+    }))
+}
+
+async fn icon() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/png")],
+        axum::body::Bytes::from_static(ICON),
+    )
+}
+
 fn authorized(headers: &HeaderMap, token: &str) -> bool {
     headers
         .get("x-warp-token")
@@ -218,16 +322,32 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
 async fn sessions(
     State(state): State<BridgeState>,
     headers: HeaderMap,
+    Query(query): Query<SessionsQuery>,
 ) -> Result<Json<Value>, StatusCode> {
     if !authorized(&headers, &state.token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
     let sessions = state
         .spawner
-        .spawn(|_bridge, ctx| list_sessions(ctx))
+        .spawn(|_bridge, ctx| list_sessions_detailed(ctx))
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    Ok(Json(json!({ "ok": true, "sessions": sessions })))
+    // Stats ride along even when the session list is unchanged, so the
+    // resource strip keeps updating at poll cadence.
+    let stats = host_stats();
+    let version = json_version(&sessions);
+    if !query.v.is_empty() && version == query.v {
+        return Ok(Json(
+            json!({ "ok": true, "changed": false, "stats": stats }),
+        ));
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "sessions": sessions,
+        "version": version,
+        "readOnlyBridge": state.read_only,
+        "stats": stats,
+    })))
 }
 
 fn list_sessions(ctx: &mut ModelContext<RemoteSessionBridge>) -> Vec<Value> {
@@ -255,9 +375,117 @@ fn list_sessions(ctx: &mut ModelContext<RemoteSessionBridge>) -> Vec<Value> {
     sessions
 }
 
+/// Page-facing listing: adds the CLI agent state and a short tail of the most
+/// recent output so the phone can show status badges and unread markers
+/// without opening every session.
+fn list_sessions_detailed(ctx: &mut ModelContext<RemoteSessionBridge>) -> Vec<Value> {
+    // Two passes: traversing the pane graph borrows ctx immutably, while the
+    // per-terminal content read needs &mut — so collect handles first and read
+    // after the traversal ends.
+    let mut views = Vec::new();
+    let window_ids = ctx.window_ids().collect::<Vec<_>>();
+    for window_id in window_ids {
+        let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) else {
+            continue;
+        };
+        for workspace in workspaces {
+            let workspace_ref = workspace.as_ref(ctx);
+            for (index, tab) in workspace_ref.tabs.iter().enumerate() {
+                let pane_group = tab.pane_group.as_ref(ctx);
+                let title = pane_group.display_title(ctx);
+                for view in pane_group.visible_terminal_views(ctx) {
+                    let read_only = view.as_ref(ctx).is_read_only();
+                    views.push((view, title.clone(), index + 1, read_only));
+                }
+            }
+        }
+    }
+    views
+        .into_iter()
+        .map(|(view, title, tab, read_only)| {
+            let agent = CLIAgentSessionsModel::as_ref(ctx)
+                .session(view.id())
+                .map(|session| {
+                    json!({
+                        "name": session.agent.display_name(),
+                        "status": wechat::status_tag(&session.status),
+                    })
+                });
+            json!({
+                "id": view.id().to_string(),
+                "title": title,
+                "tab": tab,
+                "readOnly": read_only,
+                "agent": agent,
+                "tail": terminal_tail(&view, ctx),
+            })
+        })
+        .collect()
+}
+
+fn terminal_tail(
+    view: &warpui::ViewHandle<TerminalView>,
+    ctx: &mut ModelContext<RemoteSessionBridge>,
+) -> String {
+    terminal_tail_view(view, ctx, PREVIEW_CHARS)
+}
+
+fn terminal_tail_view(
+    view: &warpui::ViewHandle<TerminalView>,
+    ctx: &mut ModelContext<RemoteSessionBridge>,
+    max_chars: usize,
+) -> String {
+    let text = {
+        let model = view.as_ref(ctx).model.lock();
+        if model.is_alt_screen_active() {
+            model.alt_screen().output_to_string_obfuscated()
+        } else {
+            let mut chunks = Vec::new();
+            let mut total = 0;
+            for block in model.block_list().blocks().iter().rev() {
+                let block_text = block.command_and_output_to_string();
+                if block_text.trim().is_empty() {
+                    continue;
+                }
+                total += block_text.len();
+                chunks.push(block_text);
+                if total >= max_chars * 4 {
+                    break;
+                }
+            }
+            chunks.reverse();
+            chunks.join("\n")
+        }
+    };
+    tail_chars(&text, max_chars)
+}
+
+/// Recent output quoted in WeChat pushes for statuses that need a look before
+/// acting (blocked / failed).
+fn push_tail(ctx: &mut ModelContext<RemoteSessionBridge>, id: EntityId) -> String {
+    let Some(view) = find_terminal(ctx, &id.to_string()) else {
+        return String::new();
+    };
+    terminal_tail_view(&view, ctx, 500)
+}
+
 #[derive(Deserialize)]
 struct ContentQuery {
     id: String,
+    #[serde(default)]
+    v: String,
+}
+
+#[derive(Deserialize)]
+struct SessionsQuery {
+    #[serde(default)]
+    v: String,
+}
+
+#[derive(Deserialize)]
+struct ManifestQuery {
+    #[serde(default)]
+    token: String,
 }
 
 async fn content(
@@ -273,10 +501,14 @@ async fn content(
         .spawn(move |_bridge, ctx| read_content(ctx, &query.id))
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    match snapshot {
-        Some(snapshot) => Ok(Json(json!({ "ok": true, "content": snapshot }))),
-        None => Err(StatusCode::NOT_FOUND),
+    let Some(snapshot) = snapshot else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+    let version = snapshot["version"].as_str().unwrap_or_default().to_owned();
+    if !query.v.is_empty() && version == query.v {
+        return Ok(Json(json!({ "ok": true, "changed": false })));
     }
+    Ok(Json(json!({ "ok": true, "content": snapshot })))
 }
 
 fn read_content(ctx: &mut ModelContext<RemoteSessionBridge>, id: &str) -> Option<Value> {
@@ -295,7 +527,9 @@ fn read_content(ctx: &mut ModelContext<RemoteSessionBridge>, id: &str) -> Option
                 }
                 total += block_text.len();
                 chunks.push(block_text);
-                if total >= MAX_CONTENT_CHARS {
+                // Byte budget with a ×4 headroom so CJK (3 bytes/char) still
+                // fills the whole character window; tail_chars caps after.
+                if total >= MAX_CONTENT_CHARS * 4 {
                     break;
                 }
             }
@@ -304,10 +538,23 @@ fn read_content(ctx: &mut ModelContext<RemoteSessionBridge>, id: &str) -> Option
         }
     };
     let text = tail_chars(&text, MAX_CONTENT_CHARS);
+    let version = json_version(&text);
     Some(json!({
         "text": text,
+        "version": version,
         "readOnly": true,
     }))
+}
+
+/// Cheap change-detection token so idle polls can skip re-sending the body.
+fn json_version(value: &impl serde::Serialize) -> String {
+    let Ok(text) = serde_json::to_string(value) else {
+        return String::new();
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(&text.len(), &mut hasher);
+    std::hash::Hash::hash(&text, &mut hasher);
+    format!("{:x}", std::hash::Hasher::finish(&hasher))
 }
 
 #[derive(Deserialize)]
@@ -325,6 +572,9 @@ async fn input(
 ) -> Result<Json<Value>, StatusCode> {
     if !authorized(&headers, &state.token) {
         return Err(StatusCode::UNAUTHORIZED);
+    }
+    if state.read_only {
+        return Err(StatusCode::FORBIDDEN);
     }
     let sent = state
         .spawner

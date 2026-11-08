@@ -24,7 +24,16 @@ fn parse_command_routes_prefixes_and_plain_text() {
         Command::Ls,
         "leading and trailing whitespace is trimmed"
     );
-    assert_eq!(parse_command("/nope"), Command::Unknown("/nope".to_owned()));
+    // Unrecognized `/` commands belong to the in-terminal agent, not to this
+    // channel; they pass through with their arguments intact.
+    assert_eq!(
+        parse_command("/code-review"),
+        Command::Send("/code-review".to_owned())
+    );
+    assert_eq!(
+        parse_command("/model sonnet"),
+        Command::Send("/model sonnet".to_owned())
+    );
 }
 
 #[test]
@@ -258,16 +267,20 @@ fn status_notification_skips_states_that_are_not_actionable() {
     assert!(
         status_notification(
             "Claude",
-            "build".to_owned(),
-            &CLIAgentSessionStatus::InProgress
+            "build",
+            &CLIAgentSessionStatus::InProgress,
+            "",
+            "http://x/?token=t"
         )
         .is_none()
     );
     assert!(
         status_notification(
             "Claude",
-            "build".to_owned(),
-            &CLIAgentSessionStatus::Cancelled
+            "build",
+            &CLIAgentSessionStatus::Cancelled,
+            "",
+            "http://x/?token=t"
         )
         .is_none()
     );
@@ -279,14 +292,34 @@ fn status_notification_includes_pending_question_and_session() {
         message: Some("允许执行 rm -rf?".to_owned()),
         source: BlockedSource::PermissionRequest,
     };
-    let text = status_notification("Claude", "build（标签 1）".to_owned(), &blocked).unwrap();
+    let text = status_notification(
+        "Claude",
+        "build（标签 1）",
+        &blocked,
+        "error: boom at line 3",
+        "http://172.16.1.45:9283/?token=t&session=7",
+    )
+    .unwrap();
     assert!(text.contains("等待授权"), "{text}");
     assert!(text.contains("允许执行 rm -rf?"));
     assert!(text.contains("build（标签 1）"));
+    assert!(text.contains("最近输出"));
+    assert!(text.contains("error: boom at line 3"));
+    assert!(text.contains("session=7"));
 
-    let success =
-        status_notification("Claude", String::new(), &CLIAgentSessionStatus::Success).unwrap();
+    let success = status_notification(
+        "Claude",
+        "",
+        &CLIAgentSessionStatus::Success,
+        "",
+        "http://x/?token=t",
+    )
+    .unwrap();
     assert!(success.starts_with("【Claude】"), "{success}");
+    assert!(
+        !success.contains("最近输出"),
+        "success omits tail: {success}"
+    );
 }
 
 #[test]
