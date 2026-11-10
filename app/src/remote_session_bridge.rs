@@ -337,9 +337,12 @@ async fn sessions(
     let stats = host_stats();
     let version = json_version(&sessions);
     if !query.v.is_empty() && version == query.v {
-        return Ok(Json(
-            json!({ "ok": true, "changed": false, "stats": stats }),
-        ));
+        return Ok(Json(json!({
+            "ok": true,
+            "changed": false,
+            "stats": stats,
+            "wechatBroken": wechat::send_broken(),
+        })));
     }
     Ok(Json(json!({
         "ok": true,
@@ -347,6 +350,7 @@ async fn sessions(
         "version": version,
         "readOnlyBridge": state.read_only,
         "stats": stats,
+        "wechatBroken": wechat::send_broken(),
     })))
 }
 

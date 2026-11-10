@@ -20,6 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wechat_ilink import IlinkError, send_text
 from wechat_notify_config import config_path, context_token_for, load_config
 
+import notify_backup
+
 MAX_SUMMARY = 120
 
 
@@ -149,12 +151,27 @@ def main() -> int:
     # Claude sets this when a Stop hook already triggered another stop.
     if payload.get("stop_hook_active") is True:
         return 0
+    message = build_message(payload)
     try:
         notify(payload)
-        append_log("sent")
+        append_log("sent via wechat")
+        return 0
     except Exception as err:
-        append_log(f"failed: {err}")
-        sys.stderr.buffer.write(f"wechat notify skipped: {err}\n".encode("utf-8", "replace"))
+        append_log(f"wechat failed: {err}")
+    # WeChat dies silently for hours once its context token expires; deliver
+    # through the backup chain instead of dropping the notification.
+    try:
+        notify_backup.send_bark(message)
+        append_log("sent via bark")
+        return 0
+    except Exception as err:
+        append_log(f"bark failed: {err}")
+    try:
+        notify_backup.toast(message)
+        append_log("sent via toast")
+    except Exception as err:
+        append_log(f"toast failed: {err}")
+        sys.stderr.buffer.write(f"notify: all channels failed\n".encode("utf-8", "replace"))
     return 0
 
 

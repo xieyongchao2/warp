@@ -39,6 +39,94 @@ pub(super) fn enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the most recent WeChat send failed; the phone page surfaces this so
+/// a dead notification path is visible instead of silently dropping pushes.
+pub(super) fn send_broken() -> bool {
+    SEND_BROKEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static SEND_BROKEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn credential_error(err: &str) -> bool {
+    err.contains("-2")
+        || err.contains("-14")
+        || err.contains("超时")
+        || err.contains("prepare failed")
+        || err.contains("context_token")
+}
+
+/// Send with the fallback chain: WeChat → (reload credentials, retry once on
+/// credential-class failures) → Bark. `SEND_BROKEN` reflects the WeChat leg.
+async fn send_with_fallback(http: &reqwest::Client, config: &mut ClawBotConfig, text: &str) {
+    let mut result = send_reply(http, config, text).await;
+    let Err(err) = &result else {
+        SEND_BROKEN.store(false, std::sync::atomic::Ordering::Relaxed);
+        return;
+    };
+    // An expired token can only be cured by credentials fresher than ours on
+    // disk (Python refresh or the user messaging the bot); reload and retry.
+    if credential_error(err)
+        && let Some(fresh) = load_config()
+    {
+        if !fresh.token.is_empty() {
+            config.token = fresh.token;
+        }
+        if !fresh.user_id.is_empty() {
+            config.user_id = fresh.user_id;
+        }
+        if !fresh.base_url.is_empty() {
+            config.base_url = fresh.base_url;
+        }
+        for (user, token) in fresh.context_tokens {
+            config.context_tokens.insert(user, token);
+        }
+        result = send_reply(http, config, text).await;
+    }
+    if result.is_ok() {
+        SEND_BROKEN.store(false, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
+    SEND_BROKEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    log::warn!("wechat channel send failed, falling back to Bark");
+    if let Err(bark_err) = send_bark(http, text).await {
+        log::warn!("bark fallback failed: {bark_err}");
+    }
+}
+
+async fn send_bark(http: &reqwest::Client, text: &str) -> Result<(), String> {
+    let Some(url) = bark_url() else {
+        return Err("bark 未配置".to_owned());
+    };
+    let body = truncate(text, 900);
+    let response = http
+        .post(&url)
+        .timeout(Duration::from_secs(10))
+        .json(&json!({ "title": "Warp 通知", "body": body, "group": "warp" }))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    Ok(())
+}
+
+/// Bark push URL from the backup-notify config shared with the Python tools.
+fn bark_url() -> Option<String> {
+    let path = if let Ok(dir) = std::env::var("WARP_WECHAT_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        PathBuf::from(dir)
+    } else {
+        PathBuf::from(std::env::var("APPDATA").ok()?).join("warp-dev")
+    }
+    .join("notify-backup.json");
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let url = value.get("barkUrl")?.as_str()?.trim().to_owned();
+    (!url.is_empty()).then_some(url)
+}
+
 #[derive(Clone, Default)]
 struct ClawBotConfig {
     base_url: String,
@@ -122,6 +210,14 @@ fn load_config() -> Option<ClawBotConfig> {
 }
 
 fn save_config(config: &ClawBotConfig) {
+    save_config_with_fresh_context(config, None);
+}
+
+/// `fresh_user` marks the account whose context token was JUST received from
+/// an inbound message: only that entry keeps the in-memory value, every other
+/// disk token wins. Otherwise a channel holding an expired token would
+/// clobber credentials the Python login tool just refreshed.
+fn save_config_with_fresh_context(config: &ClawBotConfig, fresh_user: Option<&str>) {
     // The Python login tool refreshes token/contextTokens on the same file;
     // merge disk state so a stale in-memory snapshot cannot clobber a fresh
     // login. Cursor and activeSession stay owned by this channel.
@@ -140,7 +236,10 @@ fn save_config(config: &ClawBotConfig) {
             merged.base_url = disk.base_url;
         }
         for (user, token) in disk.context_tokens {
-            merged.context_tokens.entry(user).or_insert(token);
+            if Some(user.as_str()) == fresh_user {
+                continue;
+            }
+            merged.context_tokens.insert(user, token);
         }
     }
     let Some(path) = config_path() else {
@@ -217,15 +316,7 @@ pub(super) async fn run(
         // away instead of waiting out the poll timeout.
         tokio::select! {
             Some(text) = notifications.recv() => {
-                // A dropped approval push strands the agent with no retry, so
-                // give it the same second chance command replies get.
-                if let Err(err) = send_reply(&http, &config, &text).await {
-                    log::warn!("wechat channel failed to push agent status: {err}");
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    if let Err(retry_err) = send_reply(&http, &config, &text).await {
-                        log::error!("wechat channel status push retry failed: {retry_err}");
-                    }
-                }
+                send_with_fallback(&http, &mut config, &text).await;
             }
             result = get_updates(&http, &config) => match result {
                 Ok(response) => {
@@ -248,7 +339,10 @@ pub(super) async fn run(
                     // this channel until the app restarts.
                     if (err.contains("超时") || err.contains("-14"))
                         && let Some(fresh) = load_config()
-                        && (fresh.token != config.token || fresh.user_id != config.user_id)
+                        && (fresh.token != config.token
+                            || fresh.user_id != config.user_id
+                            || fresh.context_tokens.get(&config.user_id)
+                                != config.context_tokens.get(&config.user_id))
                     {
                         log::info!("wechat channel reloading refreshed credentials");
                         if !fresh.token.is_empty() {
@@ -288,9 +382,10 @@ async fn handle_message(
         return;
     }
     if let Some(token) = message.context_token.clone() {
-        if config.context_tokens.get(&config.user_id) != Some(&token) {
-            config.context_tokens.insert(config.user_id.clone(), token);
-            save_config(config);
+        let user = config.user_id.clone();
+        if config.context_tokens.get(&user) != Some(&token) {
+            config.context_tokens.insert(user.clone(), token);
+            save_config_with_fresh_context(config, Some(&user));
         }
     }
     let key = message.dedupe_key();
@@ -302,14 +397,12 @@ async fn handle_message(
         return;
     }
     // The command already ran against the terminal, so silence here would
-    // invite a duplicate send; always answer, and retry once on failure.
+    // invite a duplicate send; always answer.
     let mut reply = dispatch(spawner, config, &text).await;
     if reply.trim().is_empty() {
         reply = "（无输出）".to_owned();
     }
-    if let Err(err) = send_reply(http, config, &reply).await {
-        log::warn!("wechat channel failed to reply: {err}");
-    }
+    send_with_fallback(http, config, &reply).await;
 }
 
 async fn dispatch(

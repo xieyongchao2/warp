@@ -332,6 +332,57 @@ fn describe_status_reports_failure_detail() {
     assert_eq!(describe_status(&CLIAgentSessionStatus::Success), "已完成");
 }
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn save_config_disk_wins_except_fresh_context() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join(format!("warp-wechat-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    unsafe { std::env::set_var("WARP_WECHAT_CONFIG_DIR", &dir) };
+
+    // Disk holds a token the Python refresh tool just wrote.
+    let disk = json!({
+        "baseUrl": "",
+        "token": "t1",
+        "userId": "u1",
+        "contextTokens": {"u1": "fresh"},
+    });
+    std::fs::write(
+        dir.join("wechat-clawbot.json"),
+        serde_json::to_string(&disk).unwrap(),
+    )
+    .unwrap();
+
+    let mut config = ClawBotConfig::default();
+    config.token = "t1".to_owned();
+    config.user_id = "u1".to_owned();
+    config
+        .context_tokens
+        .insert("u1".to_owned(), "stale".to_owned());
+
+    save_config(&config);
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("wechat-clawbot.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        saved["contextTokens"]["u1"], "fresh",
+        "an unchanged in-memory token must not clobber a fresher disk one"
+    );
+
+    config
+        .context_tokens
+        .insert("u1".to_owned(), "newer".to_owned());
+    save_config_with_fresh_context(&config, Some("u1"));
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("wechat-clawbot.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["contextTokens"]["u1"], "newer");
+
+    unsafe { std::env::remove_var("WARP_WECHAT_CONFIG_DIR") };
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn random_wechat_uin_is_base64_of_a_number() {
     let uin = random_wechat_uin();

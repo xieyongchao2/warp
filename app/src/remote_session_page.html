@@ -76,26 +76,21 @@
     .stats.hot { color: var(--blocked); font-weight: 650; }
     .count { color: var(--subtle); font-size: 10px; }
 
-    .sessions { display: grid; gap: 6px; flex: 0 0 auto; max-height: 28vh; overflow-y: auto; overscroll-behavior: contain; }
+    .sessions { display: grid; gap: 5px; flex: 0 0 auto; max-height: 22vh; overflow-y: auto; overscroll-behavior: contain; }
     .session {
-      display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px;
-      padding: 9px 11px; text-align: left; color: var(--text);
-      background: var(--surface); border: 1px solid var(--line); border-radius: 13px;
+      display: flex; align-items: center; gap: 8px; width: 100%; min-height: 42px;
+      padding: 7px 10px; text-align: left; color: var(--text);
+      background: var(--surface); border: 1px solid var(--line); border-radius: 11px;
       transition: border-color .16s, background .16s;
     }
     .session:hover { background: var(--surface-2); border-color: rgba(255,255,255,.16); }
     .session.active { background: linear-gradient(115deg, rgba(223,255,79,.11), var(--surface) 70%); border-color: rgba(223,255,79,.6); }
     .session-icon { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 9px; color: #c5cbd6; background: rgba(255,255,255,.06); }
     .session.active .session-icon { color: var(--accent); background: var(--accent-soft); }
-    .session-icon svg { width: 15px; height: 15px; }
+    .session-icon svg { width: 13px; height: 13px; }
     .session-info { min-width: 0; flex: 1; }
     .session-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
     .session-name { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .session-meta { margin-top: 3px; color: var(--subtle); font-size: 10px; }
-    .session-preview {
-      overflow: hidden; margin-top: 2px; color: var(--subtle); font-size: 10px;
-      text-overflow: ellipsis; white-space: nowrap; font-family: "SFMono-Regular", Consolas, Menlo, monospace;
-    }
     .chevron { flex: 0 0 auto; color: var(--subtle); transition: transform .18s; }
     .session.active .chevron { transform: rotate(90deg); color: var(--accent); }
     .chevron svg { width: 14px; height: 14px; display: block; }
@@ -109,6 +104,12 @@
     .agent-chip { flex: 0 0 auto; color: var(--muted); font-size: 9px; font-weight: 600; }
 
     .empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12px; background: rgba(255,255,255,.025); border: 1px dashed var(--line); border-radius: 13px; }
+    .warn-banner {
+      display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+      padding: 7px 10px; color: var(--unread); background: rgba(255, 184, 77, .1);
+      border: 1px solid rgba(255, 184, 77, .3); border-radius: 10px; font-size: 11px;
+    }
+    .warn-banner[hidden] { display: none; }
 
     .viewer {
       display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; position: relative;
@@ -206,7 +207,7 @@
 
     @media (min-width: 600px) {
       .app { padding-top: 14px; }
-      .sessions { max-height: 30vh; }
+      .sessions { max-height: 24vh; }
       .content { font-size: 12.5px; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
@@ -236,6 +237,8 @@
         </button>
       </div>
     </header>
+
+    <div id="warn-banner" class="warn-banner" hidden>微信通知发送失败中，已转备份通道；给 ClawBot 发条微信消息即可恢复主通道</div>
 
     <div class="list-head">
       <span class="list-title">已打开的会话</span>
@@ -315,6 +318,7 @@
     const pollSelect = document.querySelector("#poll");
     const followLabel = document.querySelector("#follow-label");
     const statsEl = document.querySelector("#stats");
+    const warnBanner = document.querySelector("#warn-banner");
     const wantedSession = new URLSearchParams(location.search).get("session");
     let pendingHandled = false;
     let selected = null;
@@ -390,12 +394,10 @@
         const badge = unread.has(session.id)
           ? '<span class="dot dot-unread" title="有新输出"></span>'
           : agent ? `<span class="dot ${statusDotClass(agent.status)}"></span>` : "";
-        const chip = agent ? `<span class="agent-chip">${agent.name}</span>` : "";
-        const meta = `标签 ${session.tab}${session.readOnly ? " · 只读" : ""}`;
-        const preview = session.tail ? session.tail.replace(/\s+/g, " ").trim().slice(-90) : "";
-        button.innerHTML = `<span class="session-icon">${terminalIcon}</span><span class="session-info"><span class="session-title">${badge}<span class="session-name"></span>${chip}</span><span class="session-meta">${meta}</span>${preview ? `<span class="session-preview"></span>` : ""}</span><span class="chevron">${chevronIcon}</span>`;
+        const chipText = `${agent ? `${agent.name} · ` : ""}标签 ${session.tab}${session.readOnly ? " · 只读" : ""}`;
+        button.innerHTML = `<span class="session-icon">${terminalIcon}</span><span class="session-info"><span class="session-title">${badge}<span class="session-name"></span><span class="agent-chip"></span></span></span><span class="chevron">${chevronIcon}</span>`;
         button.querySelector(".session-name").textContent = session.title || `标签 ${session.tab}`;
-        if (preview) button.querySelector(".session-preview").textContent = preview;
+        button.querySelector(".agent-chip").textContent = chipText;
         button.addEventListener("click", () => toggleSession(session.id));
         sessionsEl.appendChild(button);
       }
@@ -678,6 +680,7 @@
         if (!response.ok) throw new Error(body.error || "无法读取会话");
         sessionsFailures = 0;
         updateStats(body.stats);
+        warnBanner.hidden = body.wechatBroken !== true;
         if (body.changed === false) {
           countEl.textContent = `${sessions.length} 个`;
           return;
